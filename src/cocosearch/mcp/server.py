@@ -1060,6 +1060,113 @@ async def api_file_content(request) -> JSONResponse:
         return JSONResponse({"error": f"Failed to read file: {e}"}, status_code=500)
 
 
+# ============================================================================
+# Dependency graph API endpoints
+# ============================================================================
+
+
+@mcp.custom_route("/api/deps", methods=["POST"])
+async def api_deps(request) -> JSONResponse:
+    """Dependency tree API endpoint."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    file = body.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file is required"}, status_code=400)
+
+    index_name = body.get("index_name")
+    if not index_name:
+        return JSONResponse({"error": "index_name is required"}, status_code=400)
+
+    depth = min(body.get("depth", 5), 20)
+    dep_type = body.get("dep_type") or None
+
+    try:
+        from cocosearch.deps.query import get_dependency_tree
+
+        tree = get_dependency_tree(index_name, file, max_depth=depth, dep_type=dep_type)
+        return JSONResponse(_dep_tree_to_dict(tree))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/deps/impact", methods=["POST"])
+async def api_deps_impact(request) -> JSONResponse:
+    """Impact tree API endpoint."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    file = body.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file is required"}, status_code=400)
+
+    index_name = body.get("index_name")
+    if not index_name:
+        return JSONResponse({"error": "index_name is required"}, status_code=400)
+
+    depth = min(body.get("depth", 5), 20)
+    dep_type = body.get("dep_type") or None
+
+    try:
+        from cocosearch.deps.query import get_impact
+
+        tree = get_impact(index_name, file, max_depth=depth, dep_type=dep_type)
+        return JSONResponse(_dep_tree_to_dict(tree))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/deps/graph", methods=["GET"])
+async def api_deps_graph(request) -> JSONResponse:
+    """Dependency graph in nodes/edges format for D3 visualization."""
+    file = request.query_params.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file query param is required"}, status_code=400)
+
+    index_name = request.query_params.get("index")
+    if not index_name:
+        return JSONResponse({"error": "index query param is required"}, status_code=400)
+
+    depth = min(int(request.query_params.get("depth", "3")), 20)
+
+    try:
+        from cocosearch.deps.query import get_dependency_tree
+
+        tree = get_dependency_tree(index_name, file, max_depth=depth)
+        nodes: list[dict] = []
+        edges: list[dict] = []
+        _tree_to_graph(tree, nodes, edges, set())
+        return JSONResponse({"nodes": nodes, "edges": edges})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _dep_tree_to_dict(tree) -> dict:
+    """Convert a DependencyTree to a JSON-serializable dict."""
+    return tree.to_dict()
+
+
+def _tree_to_graph(
+    tree, nodes: list[dict], edges: list[dict], seen: set[str]
+) -> None:
+    """Convert a DependencyTree to D3 nodes/edges format."""
+    if tree.file not in seen:
+        seen.add(tree.file)
+        nodes.append({"id": tree.file, "label": tree.file.rsplit("/", 1)[-1]})
+    for child in tree.children:
+        edges.append({
+            "source": tree.file,
+            "target": child.file,
+            "dep_type": child.dep_type,
+        })
+        _tree_to_graph(child, nodes, edges, seen)
+
+
 def _get_treesitter_language(ext: str) -> str | None:
     """Map file extension to tree-sitter language name."""
     mapping = {
@@ -1311,6 +1418,13 @@ async def search_code(
             "Enabled by default. Set to False for exact line counts only."
         ),
     ] = True,
+    include_deps: Annotated[
+        bool,
+        Field(
+            description="Include dependency info (imports/dependents) for each result file. "
+            "When True, each result includes 'dependencies' and 'dependents' lists."
+        ),
+    ] = False,
 ) -> list[dict]:
     """Search indexed code using natural language.
 
@@ -1322,6 +1436,7 @@ async def search_code(
     Supports hybrid search combining vector similarity and keyword matching
     for better results when searching for code identifiers.
     If index_name is not provided, auto-detects from current working directory.
+    Set include_deps=True to attach dependency information to each result.
     """
     # Track root_path for search header (set during auto-detection)
     root_path: Path | None = None
@@ -1415,6 +1530,7 @@ async def search_code(
             use_hybrid=use_hybrid_search,
             symbol_type=symbol_type,
             symbol_name=symbol_name,
+            include_deps=include_deps,
         )
     except ValueError as e:
         # Symbol filter errors (invalid type or pre-v1.7 index)
@@ -1500,6 +1616,11 @@ async def search_code(
                 result_dict["vector_score"] = r.vector_score
             if r.keyword_score is not None:
                 result_dict["keyword_score"] = r.keyword_score
+
+            # Include dependency info when requested
+            if include_deps and r.dependencies is not None:
+                result_dict["dependencies"] = r.dependencies
+                result_dict["dependents"] = r.dependents
 
             output.append(result_dict)
     finally:
@@ -1826,6 +1947,140 @@ def index_codebase(
         }
     except Exception as e:
         return {"success": False, "error": f"Failed to index codebase: {e}"}
+
+
+# ============================================================================
+# Dependency graph MCP tools
+# ============================================================================
+
+
+@mcp.tool()
+async def get_file_dependencies(
+    file: Annotated[str, Field(description="File path relative to project root")],
+    ctx: Context,
+    index_name: Annotated[
+        str | None,
+        Field(
+            description="Index name. Auto-detects from project if not provided."
+        ),
+    ] = None,
+    depth: Annotated[
+        int,
+        Field(description="Traversal depth. 1=direct only, >1=transitive"),
+    ] = 1,
+    dep_type: Annotated[
+        str | None,
+        Field(description="Filter by type: import, call, reference"),
+    ] = None,
+) -> dict:
+    """Get dependencies for a file (what it depends on).
+
+    With depth=1, returns direct dependencies as a flat list.
+    With depth>1, returns a transitive dependency tree showing
+    the full chain of dependencies up to the specified depth.
+
+    Use dep_type to filter by dependency kind (import, call, reference).
+    """
+    try:
+        from cocosearch.deps.query import (
+            get_dependencies as _get_deps,
+            get_dependency_tree,
+        )
+
+        if not index_name:
+            index_name = await _auto_detect_index(ctx)
+            if not index_name:
+                return {"error": "Could not auto-detect index. Provide index_name."}
+
+        depth = min(depth, 20)
+        if depth <= 1:
+            edges = _get_deps(index_name, file, dep_type=dep_type)
+            return {
+                "file": file,
+                "depth": 1,
+                "dependencies": [
+                    {
+                        "target_file": e.target_file,
+                        "target_symbol": e.target_symbol,
+                        "dep_type": e.dep_type,
+                        "module": e.metadata.get("module"),
+                    }
+                    for e in edges
+                ],
+                "total": len(edges),
+            }
+        else:
+            tree = get_dependency_tree(
+                index_name, file, max_depth=depth, dep_type=dep_type
+            )
+            return {
+                "file": file,
+                "depth": depth,
+                "tree": _dep_tree_to_dict(tree),
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_file_impact(
+    file: Annotated[str, Field(description="File path relative to project root")],
+    ctx: Context,
+    index_name: Annotated[
+        str | None,
+        Field(
+            description="Index name. Auto-detects from project if not provided."
+        ),
+    ] = None,
+    depth: Annotated[
+        int,
+        Field(description="Traversal depth for transitive impact analysis (max 20)"),
+    ] = 3,
+    dep_type: Annotated[
+        str | None,
+        Field(description="Filter by type: import, call, reference"),
+    ] = None,
+) -> dict:
+    """Get impact analysis for a file (what would be affected if it changes).
+
+    Returns a tree of files that depend on the given file, transitively
+    up to the specified depth (max 20). Useful for understanding the blast
+    radius of changes.
+
+    Use dep_type to filter by dependency kind (import, call, reference).
+    """
+    try:
+        from cocosearch.deps.query import get_impact as _get_impact
+
+        if not index_name:
+            index_name = await _auto_detect_index(ctx)
+            if not index_name:
+                return {"error": "Could not auto-detect index. Provide index_name."}
+
+        depth = min(depth, 20)
+        tree = _get_impact(index_name, file, max_depth=depth, dep_type=dep_type)
+        return {
+            "file": file,
+            "depth": depth,
+            "impact_tree": _dep_tree_to_dict(tree),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _auto_detect_index(ctx: Context) -> str | None:
+    """Try to auto-detect index name from project detection."""
+    try:
+        detected_path, _source = await _detect_project(ctx)
+        from cocosearch.management.context import find_project_root
+
+        project_root, detection_method = find_project_root(detected_path)
+        if project_root is not None:
+            return resolve_index_name(project_root, detection_method)
+        return derive_index_name(detected_path)
+    except Exception:
+        pass
+    return None
 
 
 def _open_browser(url: str, delay: float = 1.5):
