@@ -45,14 +45,14 @@ class TestValuesReferences:
     """Tests for .Values.X template references."""
 
     def test_values_ref(self):
-        content = '{{ .Values.replicaCount }}'
+        content = "{{ .Values.replicaCount }}"
         edges = _extract(content)
         refs = [e for e in edges if e.metadata.get("kind") == "values_ref"]
         assert len(refs) == 1
         assert refs[0].metadata["name"] == "replicaCount"
 
     def test_nested_values_ref(self):
-        content = '{{ .Values.image.repository }}'
+        content = "{{ .Values.image.repository }}"
         edges = _extract(content)
         refs = [e for e in edges if e.metadata.get("kind") == "values_ref"]
         assert len(refs) == 1

@@ -712,10 +712,9 @@ class TestDepsEnrichment:
             )
         ]
 
-        with patch(
-            "cocosearch.deps.query.get_dependencies", return_value=mock_deps
-        ), patch(
-            "cocosearch.deps.query.get_dependents", return_value=mock_depnts
+        with (
+            patch("cocosearch.deps.query.get_dependencies", return_value=mock_deps),
+            patch("cocosearch.deps.query.get_dependents", return_value=mock_depnts),
         ):
             _enrich_with_deps(results, "test")
 
@@ -747,10 +746,9 @@ class TestDepsEnrichment:
             call_count["depnts"] += 1
             return []
 
-        with patch(
-            "cocosearch.deps.query.get_dependencies", side_effect=mock_deps
-        ), patch(
-            "cocosearch.deps.query.get_dependents", side_effect=mock_depnts
+        with (
+            patch("cocosearch.deps.query.get_dependencies", side_effect=mock_deps),
+            patch("cocosearch.deps.query.get_dependents", side_effect=mock_depnts),
         ):
             _enrich_with_deps(results, "test")
 
@@ -766,12 +764,15 @@ class TestDepsEnrichment:
             SearchResult(filename="a.py", start_byte=0, end_byte=50, score=0.9),
         ]
 
-        with patch(
-            "cocosearch.deps.query.get_dependencies",
-            side_effect=Exception("DB error"),
-        ), patch(
-            "cocosearch.deps.query.get_dependents",
-            side_effect=Exception("DB error"),
+        with (
+            patch(
+                "cocosearch.deps.query.get_dependencies",
+                side_effect=Exception("DB error"),
+            ),
+            patch(
+                "cocosearch.deps.query.get_dependents",
+                side_effect=Exception("DB error"),
+            ),
         ):
             _enrich_with_deps(results, "test")
 

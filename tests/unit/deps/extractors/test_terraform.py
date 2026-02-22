@@ -13,11 +13,11 @@ class TestModuleSources:
     """Tests for module source extraction."""
 
     def test_local_module_source(self):
-        content = '''\
+        content = """\
 module "vpc" {
   source = "./modules/vpc"
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 1
         assert edges[0].metadata["kind"] == "module_source"
@@ -27,29 +27,29 @@ module "vpc" {
         assert edges[0].dep_type == DepType.REFERENCE
 
     def test_parent_relative_module(self):
-        content = '''\
+        content = """\
 module "shared" {
   source = "../shared/modules/db"
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 1
         assert edges[0].metadata["value"] == "../shared/modules/db"
         assert edges[0].target_file == "../shared/modules/db"  # local, kept as-is
 
     def test_registry_module_source(self):
-        content = '''\
+        content = """\
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
   version = "5.0.0"
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 1
         assert edges[0].target_file is None  # external
 
     def test_multiple_modules(self):
-        content = '''\
+        content = """\
 module "vpc" {
   source = "./modules/vpc"
 }
@@ -57,16 +57,15 @@ module "vpc" {
 module "rds" {
   source = "./modules/rds"
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 2
         values = {e.metadata["value"] for e in edges}
         assert "./modules/vpc" in values
         assert "./modules/rds" in values
 
-
     def test_module_with_nested_braces(self):
-        content = '''\
+        content = """\
 module "vpc" {
   source = "./modules/vpc"
 
@@ -77,14 +76,14 @@ module "vpc" {
 
   cidr_blocks = ["10.0.0.0/16"]
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 1
         assert edges[0].metadata["value"] == "./modules/vpc"
         assert edges[0].target_file == "modules/vpc"
 
     def test_module_with_source_after_nested_block(self):
-        content = '''\
+        content = """\
 module "rds" {
   tags = {
     Name = "my-db"
@@ -93,7 +92,7 @@ module "rds" {
   source = "./modules/rds"
   engine = "postgres"
 }
-'''
+"""
         edges = _extract(content)
         assert len(edges) == 1
         assert edges[0].metadata["value"] == "./modules/rds"
@@ -106,12 +105,12 @@ class TestEdgeCases:
         assert _extract("") == []
 
     def test_no_modules(self):
-        content = '''\
+        content = """\
 resource "aws_instance" "web" {
   ami           = "ami-12345"
   instance_type = "t2.micro"
 }
-'''
+"""
         assert _extract(content) == []
 
     def test_languages_set(self):

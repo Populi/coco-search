@@ -55,9 +55,7 @@ class TestApiDeps:
             ],
         )
 
-        with patch(
-            "cocosearch.deps.query.get_dependency_tree", return_value=tree
-        ):
+        with patch("cocosearch.deps.query.get_dependency_tree", return_value=tree):
             response = await client.post(
                 "/api/deps",
                 json={"file": "src/main.py", "index_name": "test", "depth": 3},
@@ -71,16 +69,12 @@ class TestApiDeps:
 
     @pytest.mark.asyncio
     async def test_requires_file(self, client):
-        response = await client.post(
-            "/api/deps", json={"index_name": "test"}
-        )
+        response = await client.post("/api/deps", json={"index_name": "test"})
         assert response.status_code == 400
 
     @pytest.mark.asyncio
     async def test_requires_index_name(self, client):
-        response = await client.post(
-            "/api/deps", json={"file": "main.py"}
-        )
+        response = await client.post("/api/deps", json={"file": "main.py"})
         assert response.status_code == 400
 
 
@@ -121,9 +115,7 @@ class TestApiDepsImpact:
 
     @pytest.mark.asyncio
     async def test_requires_file(self, client):
-        response = await client.post(
-            "/api/deps/impact", json={"index_name": "test"}
-        )
+        response = await client.post("/api/deps/impact", json={"index_name": "test"})
         assert response.status_code == 400
 
 
@@ -151,9 +143,7 @@ class TestApiDepsGraph:
             ],
         )
 
-        with patch(
-            "cocosearch.deps.query.get_dependency_tree", return_value=tree
-        ):
+        with patch("cocosearch.deps.query.get_dependency_tree", return_value=tree):
             response = await client.get(
                 "/api/deps/graph", params={"file": "a.py", "index": "test"}
             )
@@ -167,16 +157,12 @@ class TestApiDepsGraph:
 
     @pytest.mark.asyncio
     async def test_requires_file(self, client):
-        response = await client.get(
-            "/api/deps/graph", params={"index": "test"}
-        )
+        response = await client.get("/api/deps/graph", params={"index": "test"})
         assert response.status_code == 400
 
     @pytest.mark.asyncio
     async def test_requires_index(self, client):
-        response = await client.get(
-            "/api/deps/graph", params={"file": "a.py"}
-        )
+        response = await client.get("/api/deps/graph", params={"file": "a.py"})
         assert response.status_code == 400
 
 
@@ -201,9 +187,7 @@ class TestGetFileDependenciesTool:
             )
         ]
 
-        with patch(
-            "cocosearch.deps.query.get_dependencies", return_value=edges
-        ):
+        with patch("cocosearch.deps.query.get_dependencies", return_value=edges):
             from cocosearch.mcp.server import get_file_dependencies
 
             ctx = MagicMock()
@@ -216,13 +200,9 @@ class TestGetFileDependenciesTool:
 
     @pytest.mark.asyncio
     async def test_transitive_dependencies(self):
-        tree = DependencyTree(
-            file="a.py", symbol=None, dep_type="root", children=[]
-        )
+        tree = DependencyTree(file="a.py", symbol=None, dep_type="root", children=[])
 
-        with patch(
-            "cocosearch.deps.query.get_dependency_tree", return_value=tree
-        ):
+        with patch("cocosearch.deps.query.get_dependency_tree", return_value=tree):
             from cocosearch.mcp.server import get_file_dependencies
 
             ctx = MagicMock()

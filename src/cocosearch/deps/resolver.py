@@ -69,9 +69,7 @@ class ModuleResolver(Protocol):
         """
         ...
 
-    def resolve(
-        self, edge: DependencyEdge, module_index: dict[str, str]
-    ) -> str | None:
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
         """Resolve a single dependency edge to a target file path.
 
         Args:
@@ -125,9 +123,7 @@ class PythonResolver:
 
         return index
 
-    def resolve(
-        self, edge: DependencyEdge, module_index: dict[str, str]
-    ) -> str | None:
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
         module = edge.metadata.get("module")
         if not module:
             return None
@@ -221,9 +217,7 @@ class JavaScriptResolver:
 
         return index
 
-    def resolve(
-        self, edge: DependencyEdge, module_index: dict[str, str]
-    ) -> str | None:
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
         module = edge.metadata.get("module")
         if not module:
             return None
@@ -290,9 +284,7 @@ class GoResolver:
 
         return index
 
-    def resolve(
-        self, edge: DependencyEdge, module_index: dict[str, str]
-    ) -> str | None:
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
         module = edge.metadata.get("module")
         if not module:
             return None
@@ -343,9 +335,7 @@ class TerraformResolver:
 
         return index
 
-    def resolve(
-        self, edge: DependencyEdge, module_index: dict[str, str]
-    ) -> str | None:
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
         value = edge.metadata.get("value")
         if not value:
             return None

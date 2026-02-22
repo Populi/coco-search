@@ -77,9 +77,7 @@ class PythonImportExtractor:
     # import X / import X as Y
     # ------------------------------------------------------------------
 
-    def _handle_import_statement(
-        self, source: bytes, node
-    ) -> list[DependencyEdge]:
+    def _handle_import_statement(self, source: bytes, node) -> list[DependencyEdge]:
         """Handle ``import X`` and ``import X as Y`` statements."""
         edges: list[DependencyEdge] = []
         line = node.start_point.row + 1  # 0-indexed -> 1-indexed

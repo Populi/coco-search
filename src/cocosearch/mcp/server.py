@@ -1151,19 +1151,19 @@ def _dep_tree_to_dict(tree) -> dict:
     return tree.to_dict()
 
 
-def _tree_to_graph(
-    tree, nodes: list[dict], edges: list[dict], seen: set[str]
-) -> None:
+def _tree_to_graph(tree, nodes: list[dict], edges: list[dict], seen: set[str]) -> None:
     """Convert a DependencyTree to D3 nodes/edges format."""
     if tree.file not in seen:
         seen.add(tree.file)
         nodes.append({"id": tree.file, "label": tree.file.rsplit("/", 1)[-1]})
     for child in tree.children:
-        edges.append({
-            "source": tree.file,
-            "target": child.file,
-            "dep_type": child.dep_type,
-        })
+        edges.append(
+            {
+                "source": tree.file,
+                "target": child.file,
+                "dep_type": child.dep_type,
+            }
+        )
         _tree_to_graph(child, nodes, edges, seen)
 
 
@@ -1960,9 +1960,7 @@ async def get_file_dependencies(
     ctx: Context,
     index_name: Annotated[
         str | None,
-        Field(
-            description="Index name. Auto-detects from project if not provided."
-        ),
+        Field(description="Index name. Auto-detects from project if not provided."),
     ] = None,
     depth: Annotated[
         int,
@@ -2028,9 +2026,7 @@ async def get_file_impact(
     ctx: Context,
     index_name: Annotated[
         str | None,
-        Field(
-            description="Index name. Auto-detects from project if not provided."
-        ),
+        Field(description="Index name. Auto-detects from project if not provided."),
     ] = None,
     depth: Annotated[
         int,

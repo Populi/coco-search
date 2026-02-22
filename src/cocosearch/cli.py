@@ -292,9 +292,7 @@ def index_command(args: argparse.Namespace) -> int:
                     f"{dep_stats['files_processed']} files"
                 )
             except Exception as e:
-                console.print(
-                    f"  [yellow]Dependency extraction failed: {e}[/yellow]"
-                )
+                console.print(f"  [yellow]Dependency extraction failed: {e}[/yellow]")
 
         return 0
 
@@ -1820,7 +1818,9 @@ def deps_show_command(args: argparse.Namespace) -> int:
         console.print(f"[bold red]Error:[/bold red] {e}")
         return 1
 
-    console.print(f"\n[bold]Dependencies[/bold] (what [cyan]{args.file}[/cyan] depends on):")
+    console.print(
+        f"\n[bold]Dependencies[/bold] (what [cyan]{args.file}[/cyan] depends on):"
+    )
     if dependencies:
         for edge in dependencies:
             target = (
@@ -1835,7 +1835,9 @@ def deps_show_command(args: argparse.Namespace) -> int:
     else:
         console.print("  [dim]None[/dim]")
 
-    console.print(f"\n[bold]Dependents[/bold] (what depends on [cyan]{args.file}[/cyan]):")
+    console.print(
+        f"\n[bold]Dependents[/bold] (what depends on [cyan]{args.file}[/cyan]):"
+    )
     if dependents:
         for edge in dependents:
             console.print(f"  {edge.dep_type}: {edge.source_file}")
@@ -2491,9 +2493,7 @@ def main() -> None:
     deps_tree_parser.add_argument(
         "--type", help="Filter by dependency type (import, call, reference)"
     )
-    deps_tree_parser.add_argument(
-        "--json", action="store_true", help="Output as JSON"
-    )
+    deps_tree_parser.add_argument("--json", action="store_true", help="Output as JSON")
     add_config_arg(
         deps_tree_parser,
         "-n",

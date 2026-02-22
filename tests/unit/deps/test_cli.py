@@ -251,9 +251,7 @@ class TestDepsTreeCommand:
     @patch("cocosearch.cli._resolve_index_name", return_value=("myindex", "config"))
     @patch("cocosearch.cli.load_project_config")
     @patch("cocosearch.cli.find_config_file", return_value="/fake/cocosearch.yaml")
-    def test_passes_depth_and_type(
-        self, mock_find, mock_load, mock_resolve, mock_tree
-    ):
+    def test_passes_depth_and_type(self, mock_find, mock_load, mock_resolve, mock_tree):
         """Should pass depth and type filters."""
         mock_tree.return_value = DependencyTree(
             file="a.py", symbol=None, dep_type="root", children=[]
@@ -278,9 +276,7 @@ class TestDepsTreeCommand:
     @patch("cocosearch.cli._resolve_index_name", return_value=("myindex", "config"))
     @patch("cocosearch.cli.load_project_config")
     @patch("cocosearch.cli.find_config_file", return_value="/fake/cocosearch.yaml")
-    def test_returns_one_on_error(
-        self, mock_find, mock_load, mock_resolve, mock_tree
-    ):
+    def test_returns_one_on_error(self, mock_find, mock_load, mock_resolve, mock_tree):
         """Should return 1 on error."""
         mock_tree.side_effect = Exception("DB error")
 

@@ -22,7 +22,7 @@ _INCLUDE_RE = re.compile(r'\{\{-?\s*include\s+"([^"]+)"')
 _TEMPLATE_RE = re.compile(r'\{\{-?\s*template\s+"([^"]+)"')
 
 # Match {{ .Values.X.Y.Z ... }}
-_VALUES_REF_RE = re.compile(r'\{\{-?\s*\.Values\.([\w.]+)')
+_VALUES_REF_RE = re.compile(r"\{\{-?\s*\.Values\.([\w.]+)")
 
 
 class HelmExtractor:

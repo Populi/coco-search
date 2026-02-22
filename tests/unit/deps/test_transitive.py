@@ -54,21 +54,25 @@ _CYCLE_DEPS = {
 
 def _mock_get_dependencies(graph):
     """Create a mock for get_dependencies using a predefined graph."""
+
     def mock_fn(index_name, file, dep_type=None, symbol=None):
         edges = graph.get(file, [])
         if dep_type:
             edges = [e for e in edges if e.dep_type == dep_type]
         return edges
+
     return mock_fn
 
 
 def _mock_get_dependents(graph):
     """Create a mock for get_dependents using a predefined graph."""
+
     def mock_fn(index_name, file, dep_type=None, symbol=None):
         edges = graph.get(file, [])
         if dep_type:
             edges = [e for e in edges if e.dep_type == dep_type]
         return edges
+
     return mock_fn
 
 

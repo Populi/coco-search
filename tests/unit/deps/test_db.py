@@ -166,9 +166,7 @@ class TestInsertEdges:
             insert_edges("myindex", edges)
 
         # Should have two INSERT calls
-        insert_calls = [
-            (q, p) for q, p in cursor.calls if "INSERT INTO" in q
-        ]
+        insert_calls = [(q, p) for q, p in cursor.calls if "INSERT INTO" in q]
         assert len(insert_calls) == 2
 
     def test_commits_after_insert(self, mock_db_pool):

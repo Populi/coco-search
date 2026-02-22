@@ -50,7 +50,11 @@ class DockerComposeExtractor:
                         target_file=None,
                         target_symbol=None,
                         dep_type=DepType.REFERENCE,
-                        metadata={"kind": "image", "service": service_name, "ref": image},
+                        metadata={
+                            "kind": "image",
+                            "service": service_name,
+                            "ref": image,
+                        },
                     )
                 )
 

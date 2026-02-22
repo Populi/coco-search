@@ -90,9 +90,7 @@ class JavaScriptImportExtractor:
     # ES6 imports
     # ------------------------------------------------------------------
 
-    def _handle_import(
-        self, source: bytes, node, ext: str
-    ) -> list[DependencyEdge]:
+    def _handle_import(self, source: bytes, node, ext: str) -> list[DependencyEdge]:
         """Handle ES6 import statements."""
         line = node.start_point.row + 1
         module = self._extract_source_string(source, node)
@@ -124,9 +122,7 @@ class JavaScriptImportExtractor:
     # Re-exports
     # ------------------------------------------------------------------
 
-    def _handle_export(
-        self, source: bytes, node, ext: str
-    ) -> list[DependencyEdge]:
+    def _handle_export(self, source: bytes, node, ext: str) -> list[DependencyEdge]:
         """Handle re-export statements with a source (``export { X } from 'Y'``)."""
         line = node.start_point.row + 1
         module = self._extract_source_string(source, node)
@@ -157,9 +153,7 @@ class JavaScriptImportExtractor:
     # CommonJS require()
     # ------------------------------------------------------------------
 
-    def _handle_require(
-        self, source: bytes, node
-    ) -> DependencyEdge | None:
+    def _handle_require(self, source: bytes, node) -> DependencyEdge | None:
         """Handle ``require('module')`` calls."""
         # Callee must be the identifier 'require'
         callee = node.child_by_field_name("function")

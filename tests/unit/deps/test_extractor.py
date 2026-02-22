@@ -23,12 +23,15 @@ class TestGetIndexedFiles:
             ]
         )
 
-        with patch(
-            "cocosearch.deps.extractor.get_connection_pool",
-            return_value=pool,
-        ), patch(
-            "cocosearch.deps.extractor.get_table_name",
-            return_value="codeindex_test__test_chunks",
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_connection_pool",
+                return_value=pool,
+            ),
+            patch(
+                "cocosearch.deps.extractor.get_table_name",
+                return_value="codeindex_test__test_chunks",
+            ),
         ):
             from cocosearch.deps.extractor import get_indexed_files
 
@@ -44,12 +47,15 @@ class TestGetIndexedFiles:
         """Query should use SELECT DISTINCT with filename and language_id."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.extractor.get_connection_pool",
-            return_value=pool,
-        ), patch(
-            "cocosearch.deps.extractor.get_table_name",
-            return_value="codeindex_test__test_chunks",
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_connection_pool",
+                return_value=pool,
+            ),
+            patch(
+                "cocosearch.deps.extractor.get_table_name",
+                return_value="codeindex_test__test_chunks",
+            ),
         ):
             from cocosearch.deps.extractor import get_indexed_files
 
@@ -63,12 +69,15 @@ class TestGetIndexedFiles:
         """Query should filter out rows where language_id IS NOT NULL."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.extractor.get_connection_pool",
-            return_value=pool,
-        ), patch(
-            "cocosearch.deps.extractor.get_table_name",
-            return_value="codeindex_test__test_chunks",
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_connection_pool",
+                return_value=pool,
+            ),
+            patch(
+                "cocosearch.deps.extractor.get_table_name",
+                return_value="codeindex_test__test_chunks",
+            ),
         ):
             from cocosearch.deps.extractor import get_indexed_files
 
@@ -85,9 +94,7 @@ class TestGetIndexedFiles:
 class TestExtractDependencies:
     """Tests for extract_dependencies()."""
 
-    def test_extracts_and_stores_edges_from_python_file(
-        self, mock_db_pool, tmp_path
-    ):
+    def test_extracts_and_stores_edges_from_python_file(self, mock_db_pool, tmp_path):
         """Should extract edges from a real Python file and store them."""
         # Create a real Python file with imports
         py_file = tmp_path / "src" / "main.py"
@@ -98,16 +105,21 @@ class TestExtractDependencies:
 
         indexed_files = [("src/main.py", "py")]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ) as mock_drop, patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ) as mock_create, patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ) as mock_drop,
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ) as mock_create,
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             stats = extract_dependencies("test", str(tmp_path))
@@ -134,9 +146,7 @@ class TestExtractDependencies:
         assert stats["edges_found"] == 2
         assert stats["errors"] == 0
 
-    def test_skips_files_without_registered_extractor(
-        self, mock_db_pool, tmp_path
-    ):
+    def test_skips_files_without_registered_extractor(self, mock_db_pool, tmp_path):
         """Files with no registered extractor should be skipped."""
         # Create a markdown file (no extractor for "md")
         md_file = tmp_path / "README.md"
@@ -144,16 +154,21 @@ class TestExtractDependencies:
 
         indexed_files = [("README.md", "md")]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             stats = extract_dependencies("test", str(tmp_path))
@@ -171,16 +186,21 @@ class TestExtractDependencies:
         # Don't create the file — it's "missing"
         indexed_files = [("nonexistent.py", "py")]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             stats = extract_dependencies("test", str(tmp_path))
@@ -200,20 +220,25 @@ class TestExtractDependencies:
         py_file.write_text("import json\n")
 
         indexed_files = [
-            ("app.py", "py"),           # valid
-            ("README.md", "md"),         # no extractor -> skipped
-            ("missing.py", "py"),        # missing -> error
+            ("app.py", "py"),  # valid
+            ("README.md", "md"),  # no extractor -> skipped
+            ("missing.py", "py"),  # missing -> error
         ]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ),
         ):
             from cocosearch.deps.extractor import extract_dependencies
 
@@ -231,16 +256,21 @@ class TestExtractDependencies:
 
         indexed_files = [("lib.py", "py")]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             extract_dependencies("test", str(tmp_path))
@@ -263,9 +293,7 @@ class TestExtractDependenciesModuleResolution:
         # Create two Python files where one imports the other
         (tmp_path / "src" / "mypackage").mkdir(parents=True)
         (tmp_path / "src" / "mypackage" / "__init__.py").write_text("")
-        (tmp_path / "src" / "mypackage" / "models.py").write_text(
-            "class User: pass\n"
-        )
+        (tmp_path / "src" / "mypackage" / "models.py").write_text("class User: pass\n")
         (tmp_path / "src" / "mypackage" / "cli.py").write_text(
             "from mypackage.models import User\n"
         )
@@ -276,16 +304,21 @@ class TestExtractDependenciesModuleResolution:
             ("src/mypackage/cli.py", "py"),
         ]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             extract_dependencies("test", str(tmp_path))
@@ -294,9 +327,7 @@ class TestExtractDependenciesModuleResolution:
 
         # Find the edge for "from mypackage.models import User"
         model_edges = [
-            e
-            for e in edges
-            if e.metadata.get("module") == "mypackage.models"
+            e for e in edges if e.metadata.get("module") == "mypackage.models"
         ]
         assert len(model_edges) == 1
         assert model_edges[0].target_file == "src/mypackage/models.py"
@@ -308,16 +339,21 @@ class TestExtractDependenciesModuleResolution:
 
         indexed_files = [("app.py", "py")]
 
-        with patch(
-            "cocosearch.deps.extractor.get_indexed_files",
-            return_value=indexed_files,
-        ), patch(
-            "cocosearch.deps.extractor.drop_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.create_deps_table",
-        ), patch(
-            "cocosearch.deps.extractor.insert_edges",
-        ) as mock_insert:
+        with (
+            patch(
+                "cocosearch.deps.extractor.get_indexed_files",
+                return_value=indexed_files,
+            ),
+            patch(
+                "cocosearch.deps.extractor.drop_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.create_deps_table",
+            ),
+            patch(
+                "cocosearch.deps.extractor.insert_edges",
+            ) as mock_insert,
+        ):
             from cocosearch.deps.extractor import extract_dependencies
 
             extract_dependencies("test", str(tmp_path))

@@ -63,25 +63,25 @@ class TestGroupedImports:
     """Tests for grouped import declarations."""
 
     def test_grouped_imports(self):
-        code = '''\
+        code = """\
 import (
     "fmt"
     "os"
 )
-'''
+"""
         edges = _extract(code)
         modules = [e.metadata["module"] for e in edges]
         assert "fmt" in modules
         assert "os" in modules
 
     def test_grouped_with_aliases(self):
-        code = '''\
+        code = """\
 import (
     "fmt"
     f "os"
     _ "database/sql"
 )
-'''
+"""
         edges = _extract(code)
         assert len(edges) == 3
 
@@ -94,13 +94,13 @@ import (
         assert sql_edge.metadata["alias"] == "_"
 
     def test_grouped_external_packages(self):
-        code = '''\
+        code = """\
 import (
     "fmt"
     "github.com/user/repo/pkg"
     "golang.org/x/tools"
 )
-'''
+"""
         edges = _extract(code)
         modules = [e.metadata["module"] for e in edges]
         assert "fmt" in modules
@@ -117,7 +117,7 @@ class TestFullGoFile:
     """Tests for complete Go source files."""
 
     def test_complete_go_file(self):
-        code = '''\
+        code = """\
 package main
 
 import (
@@ -130,7 +130,7 @@ import (
 func main() {
     fmt.Println("hello")
 }
-'''
+"""
         edges = _extract(code)
         modules = [e.metadata["module"] for e in edges]
         assert "fmt" in modules
@@ -138,12 +138,12 @@ func main() {
         assert "github.com/user/repo/internal/auth" in modules
 
     def test_multiple_import_declarations(self):
-        code = '''\
+        code = """\
 package main
 
 import "fmt"
 import "os"
-'''
+"""
         edges = _extract(code)
         modules = [e.metadata["module"] for e in edges]
         assert "fmt" in modules
@@ -163,11 +163,11 @@ class TestEdgeCases:
         assert edges == []
 
     def test_no_imports(self):
-        code = '''\
+        code = """\
 package main
 
 func main() {}
-'''
+"""
         edges = _extract(code)
         assert edges == []
 

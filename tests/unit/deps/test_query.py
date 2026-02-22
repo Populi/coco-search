@@ -111,9 +111,7 @@ class TestGetDependencies:
             ]
         )
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             edges = get_dependencies("myindex", "src/main.py")
 
         assert len(edges) == 2
@@ -132,9 +130,7 @@ class TestGetDependencies:
         """Should add dep_type filter when specified."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependencies("myindex", "src/main.py", dep_type=DepType.IMPORT)
 
         cursor.assert_query_contains("dep_type")
@@ -144,9 +140,7 @@ class TestGetDependencies:
         """Should add source_symbol filter when specified."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependencies("myindex", "src/main.py", symbol="main")
 
         cursor.assert_query_contains("source_symbol")
@@ -156,9 +150,7 @@ class TestGetDependencies:
         """Should return an empty list when no edges match."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             edges = get_dependencies("myindex", "src/nonexistent.py")
 
         assert edges == []
@@ -167,9 +159,7 @@ class TestGetDependencies:
         """Should query the correct deps table."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependencies("testidx", "src/main.py")
 
         cursor.assert_query_contains("cocosearch_deps_testidx")
@@ -193,9 +183,7 @@ class TestGetDependents:
             ]
         )
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             edges = get_dependents("myindex", "src/utils.py")
 
         assert len(edges) == 1
@@ -211,9 +199,7 @@ class TestGetDependents:
         """Should add target_symbol filter when specified."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependents("myindex", "src/utils.py", symbol="helper")
 
         cursor.assert_query_contains("target_symbol")
@@ -223,9 +209,7 @@ class TestGetDependents:
         """Should add dep_type filter when specified."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependents("myindex", "src/utils.py", dep_type=DepType.CALL)
 
         cursor.assert_query_contains("dep_type")
@@ -235,9 +219,7 @@ class TestGetDependents:
         """Should return an empty list when no dependents exist."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             edges = get_dependents("myindex", "src/orphan.py")
 
         assert edges == []
@@ -246,9 +228,7 @@ class TestGetDependents:
         """Should query the correct deps table."""
         pool, cursor, conn = mock_db_pool(results=[])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             get_dependents("testidx", "src/utils.py")
 
         cursor.assert_query_contains("cocosearch_deps_testidx")
@@ -261,9 +241,7 @@ class TestGetDepStats:
         """Should return dict with total_edges from COUNT(*)."""
         pool, cursor, conn = mock_db_pool(results=[(42,)])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             stats = get_dep_stats("myindex")
 
         assert stats == {"total_edges": 42}
@@ -274,9 +252,7 @@ class TestGetDepStats:
         """Should return total_edges=0 when table is empty."""
         pool, cursor, conn = mock_db_pool(results=[(0,)])
 
-        with patch(
-            "cocosearch.deps.query.get_connection_pool", return_value=pool
-        ):
+        with patch("cocosearch.deps.query.get_connection_pool", return_value=pool):
             stats = get_dep_stats("myindex")
 
         assert stats == {"total_edges": 0}

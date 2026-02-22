@@ -64,9 +64,7 @@ class GoImportExtractor:
 
         return edges
 
-    def _handle_import_declaration(
-        self, source: bytes, node
-    ) -> list[DependencyEdge]:
+    def _handle_import_declaration(self, source: bytes, node) -> list[DependencyEdge]:
         """Handle an import declaration (single or grouped)."""
         edges: list[DependencyEdge] = []
 
@@ -84,9 +82,7 @@ class GoImportExtractor:
 
         return edges
 
-    def _handle_import_spec(
-        self, source: bytes, node
-    ) -> DependencyEdge | None:
+    def _handle_import_spec(self, source: bytes, node) -> DependencyEdge | None:
         """Handle a single import spec."""
         line = node.start_point.row + 1
         path_node = node.child_by_field_name("path")
