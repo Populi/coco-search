@@ -430,8 +430,11 @@ class TestGrammarsCommandDeps:
     @patch(
         "cocosearch.deps.registry.get_all_extractor_language_ids",
         return_value={
-            "docker-compose", "github-actions", "terraform",
-            "helm-template", "helm-values",
+            "docker-compose",
+            "github-actions",
+            "terraform",
+            "helm-template",
+            "helm-values",
         },
     )
     def test_json_output_includes_deps_key(self, mock_dep_ids, capsys):
@@ -451,8 +454,11 @@ class TestGrammarsCommandDeps:
     @patch(
         "cocosearch.deps.registry.get_all_extractor_language_ids",
         return_value={
-            "docker-compose", "github-actions", "terraform",
-            "helm-template", "helm-values",
+            "docker-compose",
+            "github-actions",
+            "terraform",
+            "helm-template",
+            "helm-values",
         },
     )
     def test_docker_compose_has_deps_true(self, mock_dep_ids, capsys):

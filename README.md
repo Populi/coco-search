@@ -58,7 +58,7 @@
 
 Coco[-S]earch is a local-first hybrid semantic code search tool. It combines vector similarity and keyword matching (via RRF fusion) to find code by meaning, not just text. Powered by [CocoIndex](https://github.com/cocoindex-io/cocoindex) for indexing, [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) for syntax-aware chunking and symbol extraction, [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for storage, and [Ollama](https://ollama.com/) for local embeddings. No external APIs — everything runs on your machine.
 
-Available as a WEB dashboard, CLI, MCP server, or interactive REPL. Incremental indexing, `.gitignore`-aware. Supports 31+ languages with symbol-level filtering for 15+, plus domain-specific grammars for structured config files.
+Available as a WEB dashboard, CLI, MCP server, or interactive REPL. Incremental indexing, `.gitignore`-aware. Supports 32 languages with symbol-level filtering for 15+, plus domain-specific grammars for structured config files. Since 0.1.22: dependency graph extraction with forward trees (`deps tree`), reverse impact analysis (`deps impact`), and dependency-enriched search — for Python, JavaScript/TypeScript, Go, Docker Compose, GitHub Actions, Terraform, and Helm.
 
 <details>
 <summary>Screenshots</summary>
