@@ -656,3 +656,124 @@ class TestSymbolFilters:
         assert "symbol_type," not in last_query
         assert "symbol_name," not in last_query
         assert "symbol_signature" not in last_query
+
+
+# ============================================================================
+# Tests: Dependency enrichment
+# ============================================================================
+
+
+class TestDepsEnrichment:
+    """Tests for include_deps search enrichment."""
+
+    def test_deps_fields_default_none(self):
+        """SearchResult dep fields should default to None."""
+        result = SearchResult(
+            filename="/path/file.py",
+            start_byte=0,
+            end_byte=100,
+            score=0.85,
+        )
+        assert result.dependencies is None
+        assert result.dependents is None
+
+    def test_enrich_with_deps_attaches_data(self):
+        """_enrich_with_deps should attach dependency info to results."""
+        from cocosearch.search.query import _enrich_with_deps
+        from cocosearch.deps.models import DependencyEdge, DepType
+
+        results = [
+            SearchResult(
+                filename="src/main.py",
+                start_byte=0,
+                end_byte=100,
+                score=0.85,
+            )
+        ]
+
+        mock_deps = [
+            DependencyEdge(
+                source_file="src/main.py",
+                source_symbol=None,
+                target_file="src/utils.py",
+                target_symbol="helper",
+                dep_type=DepType.IMPORT,
+                metadata={"module": "utils"},
+            )
+        ]
+        mock_depnts = [
+            DependencyEdge(
+                source_file="src/app.py",
+                source_symbol=None,
+                target_file="src/main.py",
+                target_symbol=None,
+                dep_type=DepType.IMPORT,
+                metadata={},
+            )
+        ]
+
+        with patch(
+            "cocosearch.deps.query.get_dependencies", return_value=mock_deps
+        ), patch(
+            "cocosearch.deps.query.get_dependents", return_value=mock_depnts
+        ):
+            _enrich_with_deps(results, "test")
+
+        assert results[0].dependencies is not None
+        assert len(results[0].dependencies) == 1
+        assert results[0].dependencies[0]["target_file"] == "src/utils.py"
+
+        assert results[0].dependents is not None
+        assert len(results[0].dependents) == 1
+        assert results[0].dependents[0]["source_file"] == "src/app.py"
+
+    def test_enrich_batches_by_unique_files(self):
+        """_enrich_with_deps should query once per unique file."""
+        from cocosearch.search.query import _enrich_with_deps
+
+        results = [
+            SearchResult(filename="a.py", start_byte=0, end_byte=50, score=0.9),
+            SearchResult(filename="a.py", start_byte=51, end_byte=100, score=0.8),
+            SearchResult(filename="b.py", start_byte=0, end_byte=50, score=0.7),
+        ]
+
+        call_count = {"deps": 0, "depnts": 0}
+
+        def mock_deps(index_name, file):
+            call_count["deps"] += 1
+            return []
+
+        def mock_depnts(index_name, file):
+            call_count["depnts"] += 1
+            return []
+
+        with patch(
+            "cocosearch.deps.query.get_dependencies", side_effect=mock_deps
+        ), patch(
+            "cocosearch.deps.query.get_dependents", side_effect=mock_depnts
+        ):
+            _enrich_with_deps(results, "test")
+
+        # Should query 2 unique files, not 3 results
+        assert call_count["deps"] == 2
+        assert call_count["depnts"] == 2
+
+    def test_enrich_handles_query_errors(self):
+        """_enrich_with_deps should gracefully handle query errors."""
+        from cocosearch.search.query import _enrich_with_deps
+
+        results = [
+            SearchResult(filename="a.py", start_byte=0, end_byte=50, score=0.9),
+        ]
+
+        with patch(
+            "cocosearch.deps.query.get_dependencies",
+            side_effect=Exception("DB error"),
+        ), patch(
+            "cocosearch.deps.query.get_dependents",
+            side_effect=Exception("DB error"),
+        ):
+            _enrich_with_deps(results, "test")
+
+        assert results[0].dependencies == []
+        assert results[0].dependents == []
