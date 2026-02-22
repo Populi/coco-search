@@ -1,7 +1,5 @@
 """Tests for cocosearch.deps.registry module."""
 
-import pytest
-
 from cocosearch.deps.models import DependencyEdge
 from cocosearch.deps.registry import (
     _is_dependency_extractor,
@@ -158,11 +156,10 @@ class TestGetRegisteredExtractors:
 
 
 # ============================================================================
-# Tests: Python extractor registration (deferred to Task 4)
+# Tests: Python extractor registration
 # ============================================================================
 
 
-@pytest.mark.skip(reason="Needs Python extractor from Task 4")
 class TestPythonExtractorRegistered:
     """Tests for Python extractor being auto-registered."""
 
