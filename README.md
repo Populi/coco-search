@@ -403,7 +403,7 @@ For codebases of meaningful size, CocoSearch reduces the number of MCP tool call
 
 ## Supported Languages
 
-CocoSearch indexes 31 programming languages. Symbol-aware languages support `--symbol-type` and `--symbol-name` filtering. Context-aware languages support smart expansion to function/class boundaries. Deps-aware languages support dependency graph extraction.
+CocoSearch indexes 32 programming languages. Symbol-aware languages support `--symbol-type` and `--symbol-name` filtering. Context-aware languages support smart expansion to function/class boundaries. Deps-aware languages support dependency graph extraction.
 
 ```
 ┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━┓
@@ -439,6 +439,7 @@ CocoSearch indexes 31 programming languages. Symbol-aware languages support `--s
 │ YAML       │ .yaml, .yml                 │    ✗    │    ✗    │  ✗   │
 │ Bash       │ .sh, .bash, .zsh            │    ✓    │    ✗    │  ✗   │
 │ Dockerfile │ Dockerfile                  │    ✓    │    ✓    │  ✗   │
+│ Gotmpl     │ .tpl, .gotmpl               │    ✗    │    ✗    │  ✗   │
 │ HCL        │ .hcl                        │    ✓    │    ✓    │  ✗   │
 └────────────┴─────────────────────────────┴─────────┴─────────┴──────┘
 ```

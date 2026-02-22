@@ -1294,7 +1294,7 @@ def languages_command(args: argparse.Namespace) -> int:
             }
         )
 
-    # Handler languages (derived from handler registry)
+    # Handler languages (derived from handler registry, skip duplicates)
     from cocosearch.handlers import get_registered_handlers
 
     display_names = {"hcl": "HCL", "dockerfile": "Dockerfile", "bash": "Bash"}
@@ -1303,6 +1303,8 @@ def languages_command(args: argparse.Namespace) -> int:
         get_registered_handlers(), key=lambda h: h.SEPARATOR_SPEC.language_name
     ):
         lang = handler.SEPARATOR_SPEC.language_name
+        if lang in LANGUAGE_EXTENSIONS:
+            continue
         languages.append(
             {
                 "name": display_names.get(lang, lang.title()),
