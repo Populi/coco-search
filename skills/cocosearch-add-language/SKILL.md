@@ -66,7 +66,7 @@ Present the applicable paths:
 | **C: Both A + B** | Not built-in for chunking but has tree-sitter support | ? |
 | **D: Grammar Handler** | Domain-specific schema sharing a base language (e.g., Ansible = YAML) | ? |
 | **E: Context Expansion** | Language IS in `tree-sitter-language-pack` -- enables `smart_context=True` boundary expansion | ? |
-| **F: Dependency Extractor** | Language has import/require/reference patterns -- enables `deps tree`, `deps impact`, and `get_file_dependencies`/`get_file_impact` MCP tools | ? |
+| **F: Dependency Extractor** | Language has import/require/reference patterns -- enables `deps tree`, `deps impact`, and `get_file_dependencies`/`get_file_impact` MCP tools. Use `/cocosearch:cocosearch-add-extractor` for dedicated guidance. | ? |
 
 **Present to user:** "Based on my checks, here are the paths that apply: [list]. Ready to proceed?"
 
@@ -349,69 +349,13 @@ The `CONTEXT_EXPANSION_LANGUAGES` set is exported and referenced in search docs.
 
 > **Skip this step** unless the language has import/require/reference patterns that can be extracted for dependency analysis.
 
-Dependency extractors parse files to build a dependency graph — what imports what, what depends on what. This enables `deps tree`, `deps impact`, and the `get_file_dependencies`/`get_file_impact` MCP tools.
+For dependency extractor implementation, use the dedicated skill:
 
-### 6b-a. Decide If an Extractor Applies
+**Invoke:** `/cocosearch:cocosearch-add-extractor`
 
-Most programming languages (Python, JS/TS, Go) have import statements that create dependency edges. Infrastructure formats (Docker Compose, GitHub Actions, Terraform, Helm) have reference patterns (image refs, `uses:` actions, module sources). If your language has either, a dependency extractor applies.
+This skill provides in-depth guidance for pre-checks, analog selection, extractor implementation, optional module resolver, tests, and registration.
 
-Already implemented: Python (`py`), JavaScript/TypeScript (`js`, `jsx`, `ts`, `tsx`, `mjs`, `cjs`, `mts`, `cts`), Go (`go`), Docker Compose (`docker-compose`), GitHub Actions (`github-actions`), Terraform (`terraform`), Helm (`helm-template`, `helm-values`).
-
-### 6b-b. Find the Best Analog Extractor
-
-| Language Type | Analog Extractor | Why |
-|---|---|---|
-| Compiled / import-based | `extractors/go.py` | Tree-sitter import parsing |
-| Scripted / multi-style imports | `extractors/javascript.py` | ES6 + CommonJS + re-exports |
-| Config / YAML references | `extractors/docker_compose.py` | YAML parsing with ref types |
-| Template / include patterns | `extractors/helm.py` | Regex + YAML hybrid |
-
-```
-search_code(
-    query="<analog-language> dependency extractor LANGUAGES extract",
-    symbol_type="class",
-    use_hybrid_search=True,
-    smart_context=True
-)
-```
-
-Read the analog extractor fully before proceeding.
-
-### 6b-c. Create the Extractor
-
-Create `src/cocosearch/deps/extractors/<language>.py`:
-
-1. **Set `LANGUAGES`** — set of language IDs this extractor handles (must match the `language_id` assigned by the handler/grammar or file extension)
-2. **Implement `extract(file_path, content) -> list[DependencyEdge]`**
-3. **Choose edge types:** `DepType.IMPORT` for code imports, `DepType.REFERENCE` for grammar-level refs, `DepType.CALL` for direct symbol calls
-4. **Populate metadata:** Include `module` (the raw import string), `line` (line number), and any language-specific fields
-
-For tree-sitter-based languages, use `get_parser("<language>")` from `tree_sitter_language_pack` and walk the AST to find import nodes.
-
-The extractor is **autodiscovered** at import time — any `deps/extractors/*.py` file (not prefixed with `_`) implementing the protocol is auto-registered. No registration code needed.
-
-### 6b-d. Add a Module Resolver (If Applicable)
-
-If the language's import strings need resolution to file paths (e.g., Python dotted modules, JS relative paths), add a resolver to `src/cocosearch/deps/resolver.py`:
-
-1. **Implement `ModuleResolver` protocol:** `build_index(indexed_files)` and `resolve(edge, module_index)`
-2. **Register in `_RESOLVERS` dict** mapping language IDs to the resolver instance
-
-Already implemented: `PythonResolver`, `JavaScriptResolver`, `GoResolver`, `TerraformResolver`.
-
-### 6b-e. Create Extractor Tests
-
-Create `tests/unit/deps/extractors/test_<language>.py` covering:
-- Each import/reference pattern the extractor handles
-- Edge metadata correctness (module, line number, kind)
-- Edge cases (empty files, no imports, syntax variations)
-- `LANGUAGES` set validation
-
-If you added a resolver, add tests in `tests/unit/deps/test_resolver.py` covering:
-- `build_index()` with representative file lists
-- `resolve()` for internal imports (should return file path)
-- `resolve()` for external imports (should return None)
-- Resolver registration in the registry
+After completing the extractor skill, return here for Step 7 (count assertions) and Step 8 (documentation).
 
 **Checkpoint with user:** "Dependency extractor added for [language] with [N] import patterns. Tests pass. Ready for count assertions?"
 

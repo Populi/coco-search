@@ -217,26 +217,13 @@ search_code(
 
 > **Skip this step** unless the grammar has reference patterns worth extracting (e.g., image refs, action refs, module sources, template includes).
 
-Grammar handlers assign `language_id` to their `GRAMMAR_NAME` (e.g., `"docker-compose"`, `"github-actions"`). Dependency extractors match on `language_id`, so a grammar-level extractor just sets `LANGUAGES = {"grammar-name"}`.
+For dependency extractor implementation, use the dedicated skill:
 
-Already implemented: Docker Compose (image/depends_on/extends), GitHub Actions (uses refs), Terraform (module sources), Helm (includes/images/subcharts).
+**Invoke:** `/cocosearch:cocosearch-add-extractor`
 
-### Steps
+This skill provides in-depth guidance for pre-checks, analog selection, extractor implementation, optional module resolver, tests, and registration. Grammar extractors typically set `LANGUAGES = {"<grammar-name>"}` and use `DepType.REFERENCE` with `metadata["kind"]` for specifics.
 
-1. **Choose the analog extractor** based on your grammar type:
-   - CI/CD with action refs → `extractors/github_actions.py`
-   - Container orchestration with image/service refs → `extractors/docker_compose.py`
-   - IaC with module/provider refs → `extractors/terraform.py`
-   - Template with includes and value refs → `extractors/helm.py`
-
-2. **Create** `src/cocosearch/deps/extractors/<grammar>.py`:
-   - Set `LANGUAGES = {"<grammar-name>"}` matching the grammar handler's `GRAMMAR_NAME`
-   - YAML grammars: parse with `yaml.safe_load`, extract refs. Non-YAML: use regex
-   - All edges should use `dep_type = DepType.REFERENCE` with `metadata.kind` for specifics
-
-3. **Create tests** in `tests/unit/deps/extractors/test_<grammar>.py`
-
-The extractor is autodiscovered — no registration code needed.
+After completing the extractor skill, return here for Step 6 (count assertions) and Step 7 (documentation).
 
 **Checkpoint with user:** "Dependency extractor added for [grammar] with [N] reference types. Tests pass. Ready for count assertions?"
 
