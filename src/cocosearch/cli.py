@@ -1817,7 +1817,14 @@ def deps_show_command(args: argparse.Namespace) -> int:
     console.print(f"\n[bold]Dependencies[/bold] (what [cyan]{args.file}[/cyan] depends on):")
     if dependencies:
         for edge in dependencies:
-            target = edge.target_file or edge.target_symbol or "unknown"
+            target = (
+                edge.target_file
+                or edge.target_symbol
+                or edge.metadata.get("module")
+                or "unknown"
+            )
+            if edge.target_symbol and edge.metadata.get("module"):
+                target = f"{edge.metadata['module']}.{edge.target_symbol}"
             console.print(f"  {edge.dep_type}: {target}")
     else:
         console.print("  [dim]None[/dim]")
