@@ -29,6 +29,11 @@ class MockCursor:
         """Record query execution for later assertions."""
         self.calls.append((query, params))
 
+    def executemany(self, query: str, params_seq: Sequence[tuple]) -> None:
+        """Record batch query execution for later assertions."""
+        for params in params_seq:
+            self.calls.append((query, params))
+
     def fetchone(self) -> tuple | None:
         """Return next result row."""
         if self._fetch_index < len(self.results):

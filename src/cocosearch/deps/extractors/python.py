@@ -199,9 +199,12 @@ class PythonImportExtractor:
         """Extract the module path from a from-import statement.
 
         Handles both absolute (``dotted_name``) and relative
-        (``relative_import``) module references.
+        (``relative_import``) module references. Stops at the
+        ``import`` keyword to avoid matching imported names.
         """
         for child in node.children:
+            if child.type == "import":
+                break  # module part comes before 'import' keyword
             if child.type == "dotted_name":
                 # Absolute: from os.path import ...
                 return _node_text(source, child)

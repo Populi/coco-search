@@ -99,14 +99,14 @@ def insert_edges(index_name: str, edges: list[DependencyEdge]) -> None:
 
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            for edge in edges:
-                cur.execute(
-                    f"""
-                    INSERT INTO {table_name}
-                        (source_file, source_symbol, target_file,
-                         target_symbol, dep_type, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
+            cur.executemany(
+                f"""
+                INSERT INTO {table_name}
+                    (source_file, source_symbol, target_file,
+                     target_symbol, dep_type, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                [
                     (
                         edge.source_file,
                         edge.source_symbol,
@@ -114,8 +114,10 @@ def insert_edges(index_name: str, edges: list[DependencyEdge]) -> None:
                         edge.target_symbol,
                         edge.dep_type,
                         json.dumps(edge.metadata),
-                    ),
-                )
+                    )
+                    for edge in edges
+                ],
+            )
 
         conn.commit()
 

@@ -1807,8 +1807,12 @@ def deps_show_command(args: argparse.Namespace) -> int:
     resolver = ConfigResolver(project_config, config_path)
     index_name, _ = _resolve_index_name(resolver, cli_value=args.index)
 
-    dependencies = get_dependencies(index_name, args.file)
-    dependents = get_dependents(index_name, args.file)
+    try:
+        dependencies = get_dependencies(index_name, args.file)
+        dependents = get_dependents(index_name, args.file)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
 
     console.print(f"\n[bold]Dependencies[/bold] (what [cyan]{args.file}[/cyan] depends on):")
     if dependencies:
