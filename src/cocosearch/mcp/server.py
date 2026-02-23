@@ -413,6 +413,14 @@ async def api_reindex(request) -> JSONResponse:
                     fresh=fresh,
                 )
                 _register_with_git(index_name, source_path)
+                # Always extract dependencies after indexing
+                if not cancel_event.is_set():
+                    try:
+                        from cocosearch.deps.extractor import extract_dependencies
+
+                        extract_dependencies(index_name, source_path)
+                    except Exception as e:
+                        logger.warning(f"Dependency extraction failed: {e}")
             except Exception as exc:
                 failed = True
                 logger.error(f"Background reindex failed: {exc}")
@@ -613,6 +621,14 @@ async def api_index(request) -> JSONResponse:
                     fresh=fresh,
                 )
                 _register_with_git(index_name, project_path)
+                # Always extract dependencies after indexing
+                if not cancel_event.is_set():
+                    try:
+                        from cocosearch.deps.extractor import extract_dependencies
+
+                        extract_dependencies(index_name, project_path)
+                    except Exception as e:
+                        logger.warning(f"Dependency extraction failed: {e}")
             except Exception as exc:
                 failed = True
                 logger.error(f"Background indexing failed: {exc}")
@@ -2053,12 +2069,24 @@ def index_codebase(
             stats["files_removed"] = file_stats.get("num_deletions", 0)
             stats["files_updated"] = file_stats.get("num_updates", 0)
 
-        return {
+        # Always extract dependencies after indexing
+        dep_stats = None
+        try:
+            from cocosearch.deps.extractor import extract_dependencies
+
+            dep_stats = extract_dependencies(index_name, path)
+        except Exception as e:
+            logger.warning(f"Dependency extraction failed: {e}")
+
+        result = {
             "success": True,
             "index_name": index_name,
             "path": path,
             "stats": stats,
         }
+        if dep_stats:
+            result["dep_stats"] = dep_stats
+        return result
     except Exception as e:
         return {"success": False, "error": f"Failed to index codebase: {e}"}
 
