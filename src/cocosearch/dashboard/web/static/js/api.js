@@ -27,9 +27,20 @@ export async function fetchStats(indexName = null) {
         ? `/api/stats?index=${encodeURIComponent(indexName)}&include_failures=true`
         : '/api/stats?include_failures=true';
 
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return await response.json();
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            throw new Error('Stats request timed out — is the database running?');
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeoutId);
     }
-    return await response.json();
 }

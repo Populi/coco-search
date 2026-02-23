@@ -10,6 +10,7 @@ Provides Model Context Protocol server with tools for:
 
 # CRITICAL: Configure logging to stderr immediately before any other imports
 # This prevents stdout corruption of the JSON-RPC protocol
+import asyncio
 import os
 import sys
 import logging
@@ -188,7 +189,6 @@ async def health_check(request) -> JSONResponse:
 @mcp.custom_route("/api/heartbeat", methods=["GET"])
 async def heartbeat(request) -> StreamingResponse:
     """SSE heartbeat stream. Dashboard connects to detect server shutdown."""
-    import asyncio
 
     async def event_stream():
         try:
@@ -209,7 +209,6 @@ async def heartbeat(request) -> StreamingResponse:
 @mcp.custom_route("/api/logs", methods=["GET"])
 async def api_logs(request) -> StreamingResponse:
     """SSE stream of server logs for the dashboard log panel."""
-    import asyncio
     import json as _json
 
     from cocosearch.mcp.log_stream import get_log_buffer
@@ -290,12 +289,14 @@ async def api_stats(request) -> JSONResponse:
 
     try:
         if index_name:
-            result = build_single_stats(index_name, include_failures)
+            result = await asyncio.to_thread(
+                build_single_stats, index_name, include_failures
+            )
             return JSONResponse(
                 result, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
             )
         else:
-            all_stats = build_all_stats(include_failures)
+            all_stats = await asyncio.to_thread(build_all_stats, include_failures)
             return JSONResponse(
                 all_stats,
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
@@ -318,7 +319,9 @@ async def api_stats_single(request) -> JSONResponse:
         request.query_params.get("include_failures", "").lower() == "true"
     )
     try:
-        result = build_single_stats(index_name, include_failures)
+        result = await asyncio.to_thread(
+            build_single_stats, index_name, include_failures
+        )
         return JSONResponse(
             result, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
         )
@@ -443,8 +446,6 @@ async def api_reindex(request) -> JSONResponse:
 @mcp.custom_route("/api/extract-deps", methods=["POST"])
 async def api_extract_deps(request) -> JSONResponse:
     """Extract dependency edges for an index."""
-    import asyncio
-
     try:
         body = await request.json()
     except Exception:
@@ -469,10 +470,7 @@ async def api_extract_deps(request) -> JSONResponse:
     try:
         from cocosearch.deps.extractor import extract_dependencies
 
-        loop = asyncio.get_event_loop()
-        stats = await loop.run_in_executor(
-            None, extract_dependencies, index_name, source_path
-        )
+        stats = await asyncio.to_thread(extract_dependencies, index_name, source_path)
         edges = stats.get("edges_found", 0)
         return JSONResponse(
             {
@@ -488,30 +486,21 @@ async def api_extract_deps(request) -> JSONResponse:
         )
 
 
-@mcp.custom_route("/api/project", methods=["GET"])
-async def api_project(request) -> JSONResponse:
-    """Return current project context based on COCOSEARCH_PROJECT_PATH."""
+def _build_project_response(env_path: str) -> JSONResponse:
+    """Build project context response (sync, runs in thread pool)."""
     from cocosearch.management.context import find_project_root
     from cocosearch.management.git import get_main_repo_root
 
-    env_path = os.environ.get("COCOSEARCH_PROJECT_PATH")
-    if not env_path:
-        return JSONResponse({"has_project": False})
-
     project_root, detection_method = find_project_root(Path(env_path))
     if project_root is None:
-        # Env var set but no project root found — use the path directly
         project_root = Path(env_path).resolve()
         detection_method = None
 
-    # For worktrees, resolve to the main repo root so the dashboard shows
-    # the real project path and collision detection uses the stored canonical path.
     main_root = get_main_repo_root(project_root)
     identity_root = main_root or project_root
 
     index_name = resolve_index_name(project_root, detection_method)
 
-    # Check if the index exists
     is_indexed = False
     path_collision = False
     collision_message = None
@@ -546,6 +535,16 @@ async def api_project(request) -> JSONResponse:
             "collision_message": collision_message,
         }
     )
+
+
+@mcp.custom_route("/api/project", methods=["GET"])
+async def api_project(request) -> JSONResponse:
+    """Return current project context based on COCOSEARCH_PROJECT_PATH."""
+    env_path = os.environ.get("COCOSEARCH_PROJECT_PATH")
+    if not env_path:
+        return JSONResponse({"has_project": False})
+
+    return await asyncio.to_thread(_build_project_response, env_path)
 
 
 @mcp.custom_route("/api/index", methods=["POST"])
@@ -723,9 +722,8 @@ async def api_delete_index(request) -> JSONResponse:
         return JSONResponse({"error": f"Failed to delete index: {e}"}, status_code=500)
 
 
-@mcp.custom_route("/api/list", methods=["GET"])
-async def api_list(request) -> JSONResponse:
-    """List all indexes with metadata."""
+def _build_list_response() -> JSONResponse:
+    """Build index list response (sync, runs in thread pool)."""
     try:
         _ensure_cocoindex_init()
         indexes = mgmt_list_indexes()
@@ -749,13 +747,14 @@ async def api_list(request) -> JSONResponse:
     return JSONResponse(enriched)
 
 
-@mcp.custom_route("/api/projects", methods=["GET"])
-async def api_projects(request) -> JSONResponse:
-    """Discover projects from COCOSEARCH_PROJECTS_DIR.
+@mcp.custom_route("/api/list", methods=["GET"])
+async def api_list(request) -> JSONResponse:
+    """List all indexes with metadata."""
+    return await asyncio.to_thread(_build_list_response)
 
-    Scans the directory for subdirectories that look like projects
-    (contain .git or cocosearch.yaml) and returns them with indexing status.
-    """
+
+def _discover_projects() -> JSONResponse:
+    """Discover projects from COCOSEARCH_PROJECTS_DIR (sync, runs in thread pool)."""
     from cocosearch.management.context import find_project_root, resolve_index_name
 
     projects_dir = os.environ.get("COCOSEARCH_PROJECTS_DIR")
@@ -766,7 +765,6 @@ async def api_projects(request) -> JSONResponse:
     if not projects_path.is_dir():
         return JSONResponse([])
 
-    # Get existing indexes for status checking
     existing_indexes: set[str] = set()
     try:
         _ensure_cocoindex_init()
@@ -781,11 +779,9 @@ async def api_projects(request) -> JSONResponse:
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
 
-            # Check if it looks like a project
             project_root, detection_method = find_project_root(entry)
             if project_root is None:
                 continue
-            # Only include direct children (not deeply nested projects)
             if project_root != entry.resolve():
                 continue
 
@@ -805,6 +801,12 @@ async def api_projects(request) -> JSONResponse:
         pass
 
     return JSONResponse(projects)
+
+
+@mcp.custom_route("/api/projects", methods=["GET"])
+async def api_projects(request) -> JSONResponse:
+    """Discover projects from COCOSEARCH_PROJECTS_DIR."""
+    return await asyncio.to_thread(_discover_projects)
 
 
 @mcp.custom_route("/api/analyze", methods=["POST"])
