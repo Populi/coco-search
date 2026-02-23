@@ -1,7 +1,8 @@
 """Tests for git integration module.
 
-Tests get_git_root, derive_index_from_git, get_current_branch, and
-get_commit_hash functions using pytest-subprocess for git command mocking.
+Tests get_git_root, derive_index_from_git, get_current_branch,
+get_commit_hash, is_worktree, and get_main_repo_root functions
+using pytest-subprocess for git command mocking.
 """
 
 from pathlib import Path
@@ -13,6 +14,8 @@ from cocosearch.management.git import (
     get_commit_hash,
     get_commits_behind,
     get_branch_commit_count,
+    is_worktree,
+    get_main_repo_root,
 )
 
 
@@ -56,8 +59,8 @@ class TestDeriveIndexFromGit:
     def test_returns_index_name_in_repo(self, fp):
         """Returns sanitized directory name when in git repo."""
         fp.register(
-            ["git", "rev-parse", "--show-toplevel"],
-            stdout="/home/user/my-project\n",
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/my-project/.git\n",
         )
         result = derive_index_from_git()
         # derive_index_name sanitizes hyphens to underscores
@@ -66,7 +69,7 @@ class TestDeriveIndexFromGit:
     def test_returns_none_outside_repo(self, fp):
         """Returns None when not in git repository."""
         fp.register(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "rev-parse", "--git-common-dir"],
             returncode=128,
             stderr="fatal: not a git repository",
         )
@@ -76,8 +79,8 @@ class TestDeriveIndexFromGit:
     def test_uses_directory_name_not_full_path(self, fp):
         """Uses only the last directory component for index name."""
         fp.register(
-            ["git", "rev-parse", "--show-toplevel"],
-            stdout="/very/deep/nested/path/to/coolproject\n",
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/very/deep/nested/path/to/coolproject/.git\n",
         )
         result = derive_index_from_git()
         assert result == "coolproject"
@@ -274,3 +277,107 @@ class TestGetBranchCommitCount:
         )
         result = get_branch_commit_count()
         assert result == 42
+
+
+class TestIsWorktree:
+    """Tests for is_worktree function."""
+
+    def test_returns_true_for_worktree(self, tmp_path):
+        """Returns True when .git is a file (worktree indicator)."""
+        # Worktrees have a .git *file* pointing to the main repo
+        (tmp_path / ".git").write_text("gitdir: /main/repo/.git/worktrees/feat-x\n")
+        assert is_worktree(tmp_path) is True
+
+    def test_returns_false_for_main_checkout(self, tmp_path):
+        """Returns False when .git is a directory (main checkout)."""
+        (tmp_path / ".git").mkdir()
+        assert is_worktree(tmp_path) is False
+
+    def test_returns_false_when_no_git(self, tmp_path):
+        """Returns False when there is no .git at all."""
+        assert is_worktree(tmp_path) is False
+
+
+class TestGetMainRepoRoot:
+    """Tests for get_main_repo_root function."""
+
+    def test_returns_main_repo_root_from_worktree(self, fp):
+        """Returns parent of --git-common-dir for worktrees."""
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/myproject/.git\n",
+        )
+        result = get_main_repo_root()
+        assert result == Path("/home/user/myproject")
+
+    def test_returns_main_repo_root_from_main_checkout(self, fp):
+        """Returns same as get_git_root for main checkouts."""
+        # For main checkouts, --git-common-dir returns .git (the same dir)
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/myproject/.git\n",
+        )
+        result = get_main_repo_root()
+        assert result == Path("/home/user/myproject")
+
+    def test_handles_relative_git_common_dir(self, fp, tmp_path):
+        """Resolves relative --git-common-dir paths against the given path."""
+        # git can return relative paths like "../../.git" from worktrees
+        fp.register(
+            ["git", "-C", str(tmp_path), "rev-parse", "--git-common-dir"],
+            stdout=".git\n",
+        )
+        result = get_main_repo_root(tmp_path)
+        # .git relative to tmp_path → resolve → parent = tmp_path
+        assert result == tmp_path.resolve()
+
+    def test_returns_none_outside_repo(self, fp):
+        """Returns None when not in a git repository."""
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            returncode=128,
+            stderr="fatal: not a git repository",
+        )
+        result = get_main_repo_root()
+        assert result is None
+
+    def test_with_path_argument(self, fp):
+        """Uses -C flag when path is provided."""
+        fp.register(
+            ["git", "-C", "/my/worktree", "rev-parse", "--git-common-dir"],
+            stdout="/my/mainrepo/.git\n",
+        )
+        result = get_main_repo_root("/my/worktree")
+        assert result == Path("/my/mainrepo")
+
+    def test_strips_whitespace(self, fp):
+        """Strips trailing whitespace from git output."""
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/repo/.git\n\n",
+        )
+        result = get_main_repo_root()
+        assert result == Path("/home/user/repo")
+
+
+class TestDeriveIndexFromGitWorktree:
+    """Tests that derive_index_from_git uses main repo root."""
+
+    def test_worktree_derives_same_name_as_main(self, fp):
+        """Worktree derives index from main repo name, not worktree dir name."""
+        # Simulate being in a worktree — --git-common-dir points to main repo
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/my-project/.git\n",
+        )
+        result = derive_index_from_git()
+        assert result == "my_project"
+
+    def test_main_checkout_still_works(self, fp):
+        """Main checkout derives same name via get_main_repo_root."""
+        fp.register(
+            ["git", "rev-parse", "--git-common-dir"],
+            stdout="/home/user/coolproject/.git\n",
+        )
+        result = derive_index_from_git()
+        assert result == "coolproject"

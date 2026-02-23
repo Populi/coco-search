@@ -492,6 +492,7 @@ async def api_extract_deps(request) -> JSONResponse:
 async def api_project(request) -> JSONResponse:
     """Return current project context based on COCOSEARCH_PROJECT_PATH."""
     from cocosearch.management.context import find_project_root
+    from cocosearch.management.git import get_main_repo_root
 
     env_path = os.environ.get("COCOSEARCH_PROJECT_PATH")
     if not env_path:
@@ -502,6 +503,11 @@ async def api_project(request) -> JSONResponse:
         # Env var set but no project root found — use the path directly
         project_root = Path(env_path).resolve()
         detection_method = None
+
+    # For worktrees, resolve to the main repo root so the dashboard shows
+    # the real project path and collision detection uses the stored canonical path.
+    main_root = get_main_repo_root(project_root)
+    identity_root = main_root or project_root
 
     index_name = resolve_index_name(project_root, detection_method)
 
@@ -518,7 +524,7 @@ async def api_project(request) -> JSONResponse:
         if is_indexed:
             metadata = get_index_metadata(index_name)
             if metadata and metadata.get("canonical_path"):
-                canonical_cwd = str(project_root.resolve())
+                canonical_cwd = str(identity_root.resolve())
                 stored_path = metadata["canonical_path"]
                 if stored_path != canonical_cwd:
                     path_collision = True
@@ -532,7 +538,7 @@ async def api_project(request) -> JSONResponse:
     return JSONResponse(
         {
             "has_project": True,
-            "project_path": str(project_root),
+            "project_path": str(identity_root),
             "index_name": index_name,
             "is_indexed": is_indexed,
             "detection_method": detection_method,

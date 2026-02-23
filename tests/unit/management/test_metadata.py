@@ -796,6 +796,89 @@ class TestSetIndexStatus:
         assert result is False
 
 
+class TestWorktreeCollisionAvoidance:
+    """Tests that worktrees of the same repo don't trigger collision errors."""
+
+    def test_worktree_uses_main_repo_canonical_path(self, mock_db_pool, tmp_path):
+        """register_index_path resolves worktree path to main repo root."""
+        main_repo = tmp_path / "myproject"
+        main_repo.mkdir()
+        worktree_path = tmp_path / "myproject" / ".claude" / "worktrees" / "feat-x"
+        worktree_path.mkdir(parents=True)
+
+        canonical_main = str(main_repo.resolve())
+        pool, cursor, conn = mock_db_pool(results=[])  # No existing entry
+
+        with patch(
+            "cocosearch.management.metadata.get_connection_pool", return_value=pool
+        ):
+            with patch("cocosearch.management.metadata.ensure_metadata_table"):
+                # Mock get_main_repo_root to return the main repo path
+                with patch(
+                    "cocosearch.management.git.get_main_repo_root",
+                    return_value=main_repo,
+                ):
+                    register_index_path("myindex", worktree_path)
+
+        # The INSERT should use the main repo's canonical path, not the worktree's
+        upsert_call = [c for c in cursor.calls if "INSERT" in c[0]]
+        assert len(upsert_call) == 1
+        params = upsert_call[0][1]
+        assert params[1] == canonical_main  # canonical_path param
+
+    def test_worktree_no_collision_with_main_checkout(self, mock_db_pool, tmp_path):
+        """Indexing from worktree doesn't collide when main checkout already registered."""
+        main_repo = tmp_path / "myproject"
+        main_repo.mkdir()
+        worktree_path = tmp_path / "myproject" / ".claude" / "worktrees" / "feat-x"
+        worktree_path.mkdir(parents=True)
+
+        canonical_main = str(main_repo.resolve())
+        # Existing metadata points to the main repo path
+        pool, cursor, conn = mock_db_pool(
+            results=[
+                (
+                    "myindex",
+                    canonical_main,
+                    "2024-01-01 00:00:00",
+                    "2024-01-01 00:00:00",
+                    "indexed",
+                ),
+            ]
+        )
+
+        with patch(
+            "cocosearch.management.metadata.get_connection_pool", return_value=pool
+        ):
+            with patch("cocosearch.management.metadata.ensure_metadata_table"):
+                with patch(
+                    "cocosearch.management.git.get_main_repo_root",
+                    return_value=main_repo,
+                ):
+                    # Should NOT raise — worktree resolves to same canonical path
+                    register_index_path("myindex", worktree_path)
+
+    def test_fallback_when_not_in_git_repo(self, mock_db_pool, tmp_path):
+        """register_index_path falls back to project_path when get_main_repo_root returns None."""
+        pool, cursor, conn = mock_db_pool(results=[])
+
+        with patch(
+            "cocosearch.management.metadata.get_connection_pool", return_value=pool
+        ):
+            with patch("cocosearch.management.metadata.ensure_metadata_table"):
+                with patch(
+                    "cocosearch.management.git.get_main_repo_root",
+                    return_value=None,
+                ):
+                    register_index_path("myindex", tmp_path)
+
+        # Should use tmp_path's canonical form
+        upsert_call = [c for c in cursor.calls if "INSERT" in c[0]]
+        assert len(upsert_call) == 1
+        params = upsert_call[0][1]
+        assert params[1] == str(tmp_path.resolve())
+
+
 class TestRowcountAttribute:
     """Tests for MockCursor rowcount attribute used in metadata tests."""
 
