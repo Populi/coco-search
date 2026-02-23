@@ -151,6 +151,8 @@ class TestApiSearchSmoke:
         mock_result.symbol_type = "function"
         mock_result.symbol_name = "hello"
         mock_result.symbol_signature = "def hello()"
+        mock_result.dependencies = None
+        mock_result.dependents = None
 
         with patch("cocosearch.mcp.server._ensure_cocoindex_init"):
             with patch("cocosearch.mcp.server.search", return_value=[mock_result]):
@@ -172,6 +174,114 @@ class TestApiSearchSmoke:
         assert body["results"][0]["file_path"] == "/test/file.py"
 
 
+class TestApiSearchWithDeps:
+    """Tests for POST /api/search with include_deps through the ASGI stack."""
+
+    @pytest.mark.asyncio
+    async def test_search_with_include_deps_returns_dependencies(self, client):
+        """Returns dependencies and dependents when include_deps is true."""
+        mock_result = MagicMock()
+        mock_result.filename = "/test/file.py"
+        mock_result.start_byte = 0
+        mock_result.end_byte = 100
+        mock_result.score = 0.9
+        mock_result.block_type = "function"
+        mock_result.hierarchy = ""
+        mock_result.language_id = "python"
+        mock_result.match_type = "vector"
+        mock_result.vector_score = 0.9
+        mock_result.keyword_score = None
+        mock_result.symbol_type = "function"
+        mock_result.symbol_name = "hello"
+        mock_result.symbol_signature = "def hello()"
+        mock_result.dependencies = [
+            {"target": "os", "dep_type": "import"},
+            {"target": "sys", "dep_type": "import"},
+        ]
+        mock_result.dependents = [
+            {"source": "main.py", "dep_type": "import"},
+        ]
+
+        with patch("cocosearch.mcp.server._ensure_cocoindex_init"):
+            with patch("cocosearch.mcp.server.search", return_value=[mock_result]):
+                with patch("cocosearch.mcp.server.byte_to_line", return_value=1):
+                    with patch(
+                        "cocosearch.mcp.server.read_chunk_content",
+                        return_value="def hello(): pass",
+                    ):
+                        response = await client.post(
+                            "/api/search",
+                            json={
+                                "query": "hello function",
+                                "index_name": "myindex",
+                                "include_deps": True,
+                            },
+                        )
+
+        assert response.status_code == 200
+        body = response.json()
+        result = body["results"][0]
+        assert "dependencies" in result
+        assert len(result["dependencies"]) == 2
+        assert "dependents" in result
+        assert len(result["dependents"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_search_without_include_deps_omits_dependencies(self, client):
+        """Does not include dependencies when include_deps is false/absent."""
+        mock_result = MagicMock()
+        mock_result.filename = "/test/file.py"
+        mock_result.start_byte = 0
+        mock_result.end_byte = 100
+        mock_result.score = 0.9
+        mock_result.block_type = "function"
+        mock_result.hierarchy = ""
+        mock_result.language_id = "python"
+        mock_result.match_type = ""
+        mock_result.vector_score = None
+        mock_result.keyword_score = None
+        mock_result.symbol_type = None
+        mock_result.symbol_name = None
+        mock_result.symbol_signature = None
+        mock_result.dependencies = None
+        mock_result.dependents = None
+
+        with patch("cocosearch.mcp.server._ensure_cocoindex_init"):
+            with patch("cocosearch.mcp.server.search", return_value=[mock_result]):
+                with patch("cocosearch.mcp.server.byte_to_line", return_value=1):
+                    with patch(
+                        "cocosearch.mcp.server.read_chunk_content",
+                        return_value="def hello(): pass",
+                    ):
+                        response = await client.post(
+                            "/api/search",
+                            json={"query": "hello", "index_name": "myindex"},
+                        )
+
+        assert response.status_code == 200
+        result = response.json()["results"][0]
+        assert "dependencies" not in result
+        assert "dependents" not in result
+
+
+class TestApiDepsGraphSmoke:
+    """Tests for GET /api/deps/graph through the ASGI stack."""
+
+    @pytest.mark.asyncio
+    async def test_missing_file_param_returns_400(self, client):
+        """Returns 400 when file param is missing."""
+        response = await client.get("/api/deps/graph?index=myindex")
+        assert response.status_code == 400
+        assert "file" in response.json()["error"]
+
+    @pytest.mark.asyncio
+    async def test_missing_index_param_returns_400(self, client):
+        """Returns 400 when index param is missing."""
+        response = await client.get("/api/deps/graph?file=test.py")
+        assert response.status_code == 400
+        assert "index" in response.json()["error"]
+
+
 class TestApiLanguagesSmoke:
     """Tests for GET /api/languages through the ASGI stack."""
 
@@ -179,28 +289,110 @@ class TestApiLanguagesSmoke:
     async def test_returns_language_list(self, client):
         """Returns 200 with a list containing python."""
         with patch(
-            "cocosearch.handlers.get_registered_handlers",
-            return_value=[],
+            "cocosearch.deps.registry.get_all_extractor_language_ids",
+            return_value={"py"},
         ):
             with patch(
-                "cocosearch.search.context_expander.CONTEXT_EXPANSION_LANGUAGES",
-                {"python"},
+                "cocosearch.handlers.get_registered_handlers",
+                return_value=[],
             ):
                 with patch(
-                    "cocosearch.search.query.LANGUAGE_EXTENSIONS",
-                    {"python": [".py"]},
+                    "cocosearch.search.context_expander.CONTEXT_EXPANSION_LANGUAGES",
+                    {"python"},
                 ):
                     with patch(
-                        "cocosearch.search.query.SYMBOL_AWARE_LANGUAGES",
-                        {"python"},
+                        "cocosearch.search.query.LANGUAGE_EXTENSIONS",
+                        {"python": [".py"]},
                     ):
-                        response = await client.get("/api/languages")
+                        with patch(
+                            "cocosearch.search.query.SYMBOL_AWARE_LANGUAGES",
+                            {"python"},
+                        ):
+                            response = await client.get("/api/languages")
 
         assert response.status_code == 200
         body = response.json()
         assert isinstance(body, list)
         names = [lang["name"] for lang in body]
         assert "python" in names
+
+    @pytest.mark.asyncio
+    async def test_includes_deps_key(self, client):
+        """Each language entry should include a 'deps' key."""
+        with patch(
+            "cocosearch.deps.registry.get_all_extractor_language_ids",
+            return_value={"py"},
+        ):
+            with patch(
+                "cocosearch.handlers.get_registered_handlers",
+                return_value=[],
+            ):
+                with patch(
+                    "cocosearch.search.context_expander.CONTEXT_EXPANSION_LANGUAGES",
+                    {"python"},
+                ):
+                    with patch(
+                        "cocosearch.search.query.LANGUAGE_EXTENSIONS",
+                        {"python": [".py"]},
+                    ):
+                        with patch(
+                            "cocosearch.search.query.SYMBOL_AWARE_LANGUAGES",
+                            {"python"},
+                        ):
+                            response = await client.get("/api/languages")
+
+        body = response.json()
+        for lang in body:
+            assert "deps" in lang, f"Missing 'deps' key for {lang['name']}"
+        python_lang = next(lang for lang in body if lang["name"] == "python")
+        assert python_lang["deps"] is True
+
+
+class TestApiExtractDepsSmoke:
+    """Tests for POST /api/extract-deps through the ASGI stack."""
+
+    @pytest.mark.asyncio
+    async def test_missing_index_name_returns_400(self, client):
+        """Returns 400 when index_name is missing."""
+        response = await client.post("/api/extract-deps", json={})
+        assert response.status_code == 400
+        assert "index_name is required" in response.json()["error"]
+
+    @pytest.mark.asyncio
+    async def test_no_source_path_returns_400(self, client):
+        """Returns 400 when index has no source path and none provided."""
+        with patch("cocosearch.mcp.server.get_index_metadata", return_value=None):
+            response = await client.post(
+                "/api/extract-deps", json={"index_name": "myindex"}
+            )
+        assert response.status_code == 400
+        assert "not found or has no source path" in response.json()["error"]
+
+    @pytest.mark.asyncio
+    async def test_successful_extraction(self, client):
+        """Returns 200 with edge count on success."""
+        metadata = {"canonical_path": "/projects/myproject"}
+        stats = {
+            "files_processed": 10,
+            "files_skipped": 2,
+            "edges_found": 42,
+            "errors": 0,
+        }
+
+        with patch("cocosearch.mcp.server.get_index_metadata", return_value=metadata):
+            with patch(
+                "cocosearch.deps.extractor.extract_dependencies",
+                return_value=stats,
+            ):
+                response = await client.post(
+                    "/api/extract-deps", json={"index_name": "myindex"}
+                )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert "42" in body["message"]
+        assert body["stats"]["edges_found"] == 42
 
 
 class TestApiGrammarsSmoke:
@@ -215,13 +407,38 @@ class TestApiGrammarsSmoke:
         mock_grammar.PATH_PATTERNS = [".github/workflows/*.yml"]
 
         with patch(
-            "cocosearch.handlers.get_registered_grammars",
-            return_value=[mock_grammar],
+            "cocosearch.deps.registry.get_all_extractor_language_ids",
+            return_value={"github-actions"},
         ):
-            response = await client.get("/api/grammars")
+            with patch(
+                "cocosearch.handlers.get_registered_grammars",
+                return_value=[mock_grammar],
+            ):
+                response = await client.get("/api/grammars")
 
         assert response.status_code == 200
         body = response.json()
         assert isinstance(body, list)
         assert len(body) == 1
         assert body[0]["name"] == "github-actions"
+
+    @pytest.mark.asyncio
+    async def test_includes_deps_key(self, client):
+        """Each grammar entry should include a 'deps' key."""
+        mock_grammar = MagicMock()
+        mock_grammar.GRAMMAR_NAME = "github-actions"
+        mock_grammar.BASE_LANGUAGE = "yaml"
+        mock_grammar.PATH_PATTERNS = [".github/workflows/*.yml"]
+
+        with patch(
+            "cocosearch.deps.registry.get_all_extractor_language_ids",
+            return_value={"github-actions"},
+        ):
+            with patch(
+                "cocosearch.handlers.get_registered_grammars",
+                return_value=[mock_grammar],
+            ):
+                response = await client.get("/api/grammars")
+
+        body = response.json()
+        assert body[0]["deps"] is True

@@ -8,6 +8,49 @@ import subprocess
 from pathlib import Path
 
 
+def is_worktree(path: str | Path | None = None) -> bool:
+    """Check if the given path is inside a git worktree (not the main checkout).
+
+    Worktrees have a .git *file* (pointing to the main repo's .git/worktrees/<name>),
+    while the main checkout has a .git *directory*.
+
+    Args:
+        path: Directory to check. Defaults to current directory.
+
+    Returns:
+        True if the path is a git worktree, False otherwise.
+    """
+    git_path = (Path(path) if path else Path.cwd()) / ".git"
+    return git_path.is_file()
+
+
+def get_main_repo_root(path: str | Path | None = None) -> Path | None:
+    """Get the root of the main git working tree.
+
+    For worktrees, follows --git-common-dir to find the main repo's .git directory,
+    then returns its parent. For main checkouts, returns the same as get_git_root().
+
+    Args:
+        path: Directory to check. Defaults to current directory.
+
+    Returns:
+        Path to the main repo root, or None if not in a git repository.
+    """
+    cmd = ["git", "rev-parse", "--git-common-dir"]
+    if path:
+        cmd = ["git", "-C", str(path)] + cmd[1:]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        git_common_dir = Path(result.stdout.strip())
+        if not git_common_dir.is_absolute():
+            # --git-common-dir can return a relative path from the worktree
+            base = Path(path) if path else Path.cwd()
+            git_common_dir = (base / git_common_dir).resolve()
+        return git_common_dir.parent
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def get_git_root() -> Path | None:
     """Get the root directory of the current git repository.
 
@@ -174,15 +217,16 @@ def get_branch_commit_count(path: str | Path | None = None) -> int | None:
 def derive_index_from_git() -> str | None:
     """Derive an index name from the current git repository.
 
-    Combines git root detection with the standard index name derivation.
+    Uses the main repo root (not the worktree root) so that all worktrees
+    of the same repository derive the same index name.
 
     Returns:
         Index name derived from git root directory, or None if not in a git repo.
     """
-    git_root = get_git_root()
-    if git_root is None:
+    repo_root = get_main_repo_root()
+    if repo_root is None:
         return None
 
     from cocosearch.management.context import derive_index_name
 
-    return derive_index_name(str(git_root))
+    return derive_index_name(str(repo_root))

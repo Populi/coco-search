@@ -213,6 +213,20 @@ search_code(
 
 **Checkpoint with user:** "Grammar handler created at `src/cocosearch/handlers/grammars/<grammar>.py` with [path-specific/broad] matching. Tests pass. Ready for count assertions and documentation?"
 
+## Step 5b: Add Dependency Extractor (Optional)
+
+> **Skip this step** unless the grammar has reference patterns worth extracting (e.g., image refs, action refs, module sources, template includes).
+
+For dependency extractor implementation, use the dedicated skill:
+
+**Invoke:** `/cocosearch:cocosearch-add-extractor`
+
+This skill provides in-depth guidance for pre-checks, analog selection, extractor implementation, optional module resolver, tests, and registration. Grammar extractors typically set `LANGUAGES = {"<grammar-name>"}` and use `DepType.REFERENCE` with `metadata["kind"]` for specifics.
+
+After completing the extractor skill, return here for Step 6 (count assertions) and Step 7 (documentation).
+
+**Checkpoint with user:** "Dependency extractor added for [grammar] with [N] reference types. Tests pass. Ready for count assertions?"
+
 ## Step 6: Update Count Assertions
 
 > **This is the most commonly missed step.** Do not skip.
@@ -281,6 +295,9 @@ If the new grammar introduces a novel matching pattern (e.g., first non-YAML gra
 # Grammar tests
 uv run pytest tests/unit/handlers/grammars/test_<grammar>.py -v
 
+# Dependency extractor tests (if added)
+uv run pytest tests/unit/deps/extractors/test_<grammar>.py -v
+
 # Registry count assertions
 uv run pytest tests/unit/handlers/test_registry.py -v
 uv run pytest tests/unit/handlers/test_grammar_registry.py -v
@@ -333,7 +350,9 @@ Complete checklist of all registration points. Check off each one as you complet
 - [ ] `tests/unit/handlers/grammars/test_<grammar>.py` created
 - [ ] `tests/unit/handlers/test_grammar_registry.py` -- grammar count and name set updated
 - [ ] `tests/unit/handlers/test_registry.py` -- combined spec count updated
-- [ ] `CLAUDE.md` -- grammar handler list and counts updated
+- [ ] `src/cocosearch/deps/extractors/<grammar>.py` created (if grammar has reference patterns)
+- [ ] `tests/unit/deps/extractors/test_<grammar>.py` created (if extractor added)
+- [ ] `CLAUDE.md` -- grammar handler list, extractor count, and dependency descriptions updated
 - [ ] `README.md` -- grammar table and badges updated
 
 For common search tips (hybrid search, smart_context, symbol filtering), see `skills/README.md`.

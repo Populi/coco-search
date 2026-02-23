@@ -10,6 +10,7 @@ Provides Model Context Protocol server with tools for:
 
 # CRITICAL: Configure logging to stderr immediately before any other imports
 # This prevents stdout corruption of the JSON-RPC protocol
+import asyncio
 import os
 import sys
 import logging
@@ -134,6 +135,11 @@ def build_all_stats(include_failures: bool = False) -> list[dict]:
     """
     _ensure_cocoindex_init()
     indexes = mgmt_list_indexes()
+    logger.debug(
+        "build_all_stats: found %d indexes: %s",
+        len(indexes),
+        [i["name"] for i in indexes],
+    )
     all_stats = []
     for idx in indexes:
         try:
@@ -144,7 +150,8 @@ def build_all_stats(include_failures: bool = False) -> list[dict]:
                 result["parse_failures"] = get_parse_failures(idx["name"])
                 result["grammar_failures"] = get_grammar_failures(idx["name"])
             all_stats.append(result)
-        except ValueError:
+        except ValueError as e:
+            logger.warning("build_all_stats: skipped index %r: %s", idx["name"], e)
             continue
     return all_stats
 
@@ -182,7 +189,6 @@ async def health_check(request) -> JSONResponse:
 @mcp.custom_route("/api/heartbeat", methods=["GET"])
 async def heartbeat(request) -> StreamingResponse:
     """SSE heartbeat stream. Dashboard connects to detect server shutdown."""
-    import asyncio
 
     async def event_stream():
         try:
@@ -203,7 +209,6 @@ async def heartbeat(request) -> StreamingResponse:
 @mcp.custom_route("/api/logs", methods=["GET"])
 async def api_logs(request) -> StreamingResponse:
     """SSE stream of server logs for the dashboard log panel."""
-    import asyncio
     import json as _json
 
     from cocosearch.mcp.log_stream import get_log_buffer
@@ -284,12 +289,14 @@ async def api_stats(request) -> JSONResponse:
 
     try:
         if index_name:
-            result = build_single_stats(index_name, include_failures)
+            result = await asyncio.to_thread(
+                build_single_stats, index_name, include_failures
+            )
             return JSONResponse(
                 result, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
             )
         else:
-            all_stats = build_all_stats(include_failures)
+            all_stats = await asyncio.to_thread(build_all_stats, include_failures)
             return JSONResponse(
                 all_stats,
                 headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
@@ -312,7 +319,9 @@ async def api_stats_single(request) -> JSONResponse:
         request.query_params.get("include_failures", "").lower() == "true"
     )
     try:
-        result = build_single_stats(index_name, include_failures)
+        result = await asyncio.to_thread(
+            build_single_stats, index_name, include_failures
+        )
         return JSONResponse(
             result, headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
         )
@@ -404,6 +413,14 @@ async def api_reindex(request) -> JSONResponse:
                     fresh=fresh,
                 )
                 _register_with_git(index_name, source_path)
+                # Always extract dependencies after indexing
+                if not cancel_event.is_set():
+                    try:
+                        from cocosearch.deps.extractor import extract_dependencies
+
+                        extract_dependencies(index_name, source_path)
+                    except Exception as e:
+                        logger.warning(f"Dependency extraction failed: {e}")
             except Exception as exc:
                 failed = True
                 logger.error(f"Background reindex failed: {exc}")
@@ -434,24 +451,64 @@ async def api_reindex(request) -> JSONResponse:
     )
 
 
-@mcp.custom_route("/api/project", methods=["GET"])
-async def api_project(request) -> JSONResponse:
-    """Return current project context based on COCOSEARCH_PROJECT_PATH."""
-    from cocosearch.management.context import find_project_root
+@mcp.custom_route("/api/extract-deps", methods=["POST"])
+async def api_extract_deps(request) -> JSONResponse:
+    """Extract dependency edges for an index."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
-    env_path = os.environ.get("COCOSEARCH_PROJECT_PATH")
-    if not env_path:
-        return JSONResponse({"has_project": False})
+    index_name = body.get("index_name")
+    if not index_name:
+        return JSONResponse({"error": "index_name is required"}, status_code=400)
+
+    # Look up source path from metadata, with fallbacks
+    metadata = get_index_metadata(index_name)
+    source_path = metadata.get("canonical_path") if metadata else None
+
+    if not source_path:
+        source_path = body.get("source_path")
+        if not source_path:
+            return JSONResponse(
+                {"error": f"Index '{index_name}' not found or has no source path"},
+                status_code=400,
+            )
+
+    try:
+        from cocosearch.deps.extractor import extract_dependencies
+
+        stats = await asyncio.to_thread(extract_dependencies, index_name, source_path)
+        edges = stats.get("edges_found", 0)
+        return JSONResponse(
+            {
+                "success": True,
+                "message": f"Extracted {edges} dependency edges for '{index_name}'",
+                "stats": stats,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Dependency extraction failed: {e}")
+        return JSONResponse(
+            {"error": f"Dependency extraction failed: {e}"}, status_code=500
+        )
+
+
+def _build_project_response(env_path: str) -> JSONResponse:
+    """Build project context response (sync, runs in thread pool)."""
+    from cocosearch.management.context import find_project_root
+    from cocosearch.management.git import get_main_repo_root
 
     project_root, detection_method = find_project_root(Path(env_path))
     if project_root is None:
-        # Env var set but no project root found — use the path directly
         project_root = Path(env_path).resolve()
         detection_method = None
 
+    main_root = get_main_repo_root(project_root)
+    identity_root = main_root or project_root
+
     index_name = resolve_index_name(project_root, detection_method)
 
-    # Check if the index exists
     is_indexed = False
     path_collision = False
     collision_message = None
@@ -464,7 +521,7 @@ async def api_project(request) -> JSONResponse:
         if is_indexed:
             metadata = get_index_metadata(index_name)
             if metadata and metadata.get("canonical_path"):
-                canonical_cwd = str(project_root.resolve())
+                canonical_cwd = str(identity_root.resolve())
                 stored_path = metadata["canonical_path"]
                 if stored_path != canonical_cwd:
                     path_collision = True
@@ -478,7 +535,7 @@ async def api_project(request) -> JSONResponse:
     return JSONResponse(
         {
             "has_project": True,
-            "project_path": str(project_root),
+            "project_path": str(identity_root),
             "index_name": index_name,
             "is_indexed": is_indexed,
             "detection_method": detection_method,
@@ -486,6 +543,16 @@ async def api_project(request) -> JSONResponse:
             "collision_message": collision_message,
         }
     )
+
+
+@mcp.custom_route("/api/project", methods=["GET"])
+async def api_project(request) -> JSONResponse:
+    """Return current project context based on COCOSEARCH_PROJECT_PATH."""
+    env_path = os.environ.get("COCOSEARCH_PROJECT_PATH")
+    if not env_path:
+        return JSONResponse({"has_project": False})
+
+    return await asyncio.to_thread(_build_project_response, env_path)
 
 
 @mcp.custom_route("/api/index", methods=["POST"])
@@ -554,6 +621,14 @@ async def api_index(request) -> JSONResponse:
                     fresh=fresh,
                 )
                 _register_with_git(index_name, project_path)
+                # Always extract dependencies after indexing
+                if not cancel_event.is_set():
+                    try:
+                        from cocosearch.deps.extractor import extract_dependencies
+
+                        extract_dependencies(index_name, project_path)
+                    except Exception as e:
+                        logger.warning(f"Dependency extraction failed: {e}")
             except Exception as exc:
                 failed = True
                 logger.error(f"Background indexing failed: {exc}")
@@ -663,9 +738,8 @@ async def api_delete_index(request) -> JSONResponse:
         return JSONResponse({"error": f"Failed to delete index: {e}"}, status_code=500)
 
 
-@mcp.custom_route("/api/list", methods=["GET"])
-async def api_list(request) -> JSONResponse:
-    """List all indexes with metadata."""
+def _build_list_response() -> JSONResponse:
+    """Build index list response (sync, runs in thread pool)."""
     try:
         _ensure_cocoindex_init()
         indexes = mgmt_list_indexes()
@@ -689,13 +763,14 @@ async def api_list(request) -> JSONResponse:
     return JSONResponse(enriched)
 
 
-@mcp.custom_route("/api/projects", methods=["GET"])
-async def api_projects(request) -> JSONResponse:
-    """Discover projects from COCOSEARCH_PROJECTS_DIR.
+@mcp.custom_route("/api/list", methods=["GET"])
+async def api_list(request) -> JSONResponse:
+    """List all indexes with metadata."""
+    return await asyncio.to_thread(_build_list_response)
 
-    Scans the directory for subdirectories that look like projects
-    (contain .git or cocosearch.yaml) and returns them with indexing status.
-    """
+
+def _discover_projects() -> JSONResponse:
+    """Discover projects from COCOSEARCH_PROJECTS_DIR (sync, runs in thread pool)."""
     from cocosearch.management.context import find_project_root, resolve_index_name
 
     projects_dir = os.environ.get("COCOSEARCH_PROJECTS_DIR")
@@ -706,7 +781,6 @@ async def api_projects(request) -> JSONResponse:
     if not projects_path.is_dir():
         return JSONResponse([])
 
-    # Get existing indexes for status checking
     existing_indexes: set[str] = set()
     try:
         _ensure_cocoindex_init()
@@ -721,11 +795,9 @@ async def api_projects(request) -> JSONResponse:
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
 
-            # Check if it looks like a project
             project_root, detection_method = find_project_root(entry)
             if project_root is None:
                 continue
-            # Only include direct children (not deeply nested projects)
             if project_root != entry.resolve():
                 continue
 
@@ -745,6 +817,12 @@ async def api_projects(request) -> JSONResponse:
         pass
 
     return JSONResponse(projects)
+
+
+@mcp.custom_route("/api/projects", methods=["GET"])
+async def api_projects(request) -> JSONResponse:
+    """Discover projects from COCOSEARCH_PROJECTS_DIR."""
+    return await asyncio.to_thread(_discover_projects)
 
 
 @mcp.custom_route("/api/analyze", methods=["POST"])
@@ -803,10 +881,12 @@ async def api_analyze(request) -> JSONResponse:
 @mcp.custom_route("/api/languages", methods=["GET"])
 async def api_languages(request) -> JSONResponse:
     """List supported languages with extensions and capabilities."""
+    from cocosearch.deps.registry import get_all_extractor_language_ids
     from cocosearch.handlers import get_registered_handlers
     from cocosearch.search.context_expander import CONTEXT_EXPANSION_LANGUAGES
     from cocosearch.search.query import LANGUAGE_EXTENSIONS, SYMBOL_AWARE_LANGUAGES
 
+    dep_language_ids = get_all_extractor_language_ids()
     languages = []
 
     for lang, exts in sorted(LANGUAGE_EXTENSIONS.items()):
@@ -816,6 +896,7 @@ async def api_languages(request) -> JSONResponse:
                 "extensions": list(exts),
                 "symbols": lang in SYMBOL_AWARE_LANGUAGES,
                 "context": lang in CONTEXT_EXPANSION_LANGUAGES,
+                "deps": any(ext.lstrip(".") in dep_language_ids for ext in exts),
                 "source": "builtin",
             }
         )
@@ -824,12 +905,18 @@ async def api_languages(request) -> JSONResponse:
         get_registered_handlers(), key=lambda h: h.SEPARATOR_SPEC.language_name
     ):
         lang = handler.SEPARATOR_SPEC.language_name
+        if lang in LANGUAGE_EXTENSIONS:
+            continue
         languages.append(
             {
                 "name": lang,
                 "extensions": list(handler.EXTENSIONS),
                 "symbols": lang in SYMBOL_AWARE_LANGUAGES,
                 "context": lang in CONTEXT_EXPANSION_LANGUAGES,
+                "deps": lang in dep_language_ids
+                or any(
+                    ext.lstrip(".") in dep_language_ids for ext in handler.EXTENSIONS
+                ),
                 "source": "handler",
             }
         )
@@ -840,7 +927,10 @@ async def api_languages(request) -> JSONResponse:
 @mcp.custom_route("/api/grammars", methods=["GET"])
 async def api_grammars(request) -> JSONResponse:
     """List supported grammars with path patterns."""
+    from cocosearch.deps.registry import get_all_extractor_language_ids
     from cocosearch.handlers import get_registered_grammars
+
+    dep_language_ids = get_all_extractor_language_ids()
 
     grammars = []
     for handler in sorted(get_registered_grammars(), key=lambda h: h.GRAMMAR_NAME):
@@ -849,6 +939,7 @@ async def api_grammars(request) -> JSONResponse:
                 "name": handler.GRAMMAR_NAME,
                 "base_language": handler.BASE_LANGUAGE,
                 "path_patterns": handler.PATH_PATTERNS,
+                "deps": handler.GRAMMAR_NAME in dep_language_ids,
             }
         )
 
@@ -880,6 +971,7 @@ async def api_search(request) -> JSONResponse:
     min_score = body.get("min_score", 0.3)
     use_hybrid = body.get("use_hybrid")
     no_cache = body.get("no_cache", False)
+    include_deps = body.get("include_deps", True)
     smart_context = body.get("smart_context", False)
     context_before = body.get("context_before")
     context_after = body.get("context_after")
@@ -905,6 +997,7 @@ async def api_search(request) -> JSONResponse:
             symbol_type=symbol_type,
             symbol_name=symbol_name,
             no_cache=no_cache,
+            include_deps=include_deps,
         )
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -919,12 +1012,19 @@ async def api_search(request) -> JSONResponse:
     if smart_context or context_before is not None or context_after is not None:
         expander = ContextExpander()
 
+    # Resolve relative DB paths to absolute using the index's canonical_path
+    metadata = get_index_metadata(index_name)
+    source_path = metadata.get("canonical_path") if metadata else None
+
     output = []
     try:
         for r in results:
-            start_line = byte_to_line(r.filename, r.start_byte)
-            end_line = byte_to_line(r.filename, r.end_byte)
-            content = read_chunk_content(r.filename, r.start_byte, r.end_byte)
+            filepath = (
+                os.path.join(source_path, r.filename) if source_path else r.filename
+            )
+            start_line = byte_to_line(filepath, r.start_byte)
+            end_line = byte_to_line(filepath, r.end_byte)
+            content = read_chunk_content(filepath, r.start_byte, r.end_byte)
 
             result_dict = {
                 "file_path": r.filename,
@@ -947,7 +1047,7 @@ async def api_search(request) -> JSONResponse:
 
                 before_lines, _match_lines, after_lines, _is_bof, _is_eof = (
                     expander.get_context_lines(
-                        r.filename,
+                        filepath,
                         start_line,
                         end_line,
                         context_before=context_before or 0,
@@ -970,6 +1070,10 @@ async def api_search(request) -> JSONResponse:
                 result_dict["vector_score"] = r.vector_score
             if r.keyword_score is not None:
                 result_dict["keyword_score"] = r.keyword_score
+
+            if include_deps and r.dependencies is not None:
+                result_dict["dependencies"] = r.dependencies
+                result_dict["dependents"] = r.dependents or []
 
             output.append(result_dict)
     finally:
@@ -1058,6 +1162,131 @@ async def api_file_content(request) -> JSONResponse:
         return JSONResponse(result)
     except Exception as e:
         return JSONResponse({"error": f"Failed to read file: {e}"}, status_code=500)
+
+
+# ============================================================================
+# Dependency graph API endpoints
+# ============================================================================
+
+
+@mcp.custom_route("/api/deps", methods=["POST"])
+async def api_deps(request) -> JSONResponse:
+    """Dependency tree API endpoint."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    file = body.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file is required"}, status_code=400)
+
+    index_name = body.get("index_name")
+    if not index_name:
+        return JSONResponse({"error": "index_name is required"}, status_code=400)
+
+    depth = min(body.get("depth", 5), 20)
+    dep_type = body.get("dep_type") or None
+
+    try:
+        from cocosearch.deps.query import get_dependency_tree
+
+        tree = get_dependency_tree(index_name, file, max_depth=depth, dep_type=dep_type)
+        return JSONResponse(_dep_tree_to_dict(tree))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/deps/impact", methods=["POST"])
+async def api_deps_impact(request) -> JSONResponse:
+    """Impact tree API endpoint."""
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
+
+    file = body.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file is required"}, status_code=400)
+
+    index_name = body.get("index_name")
+    if not index_name:
+        return JSONResponse({"error": "index_name is required"}, status_code=400)
+
+    depth = min(body.get("depth", 5), 20)
+    dep_type = body.get("dep_type") or None
+
+    try:
+        from cocosearch.deps.query import get_impact
+
+        tree = get_impact(index_name, file, max_depth=depth, dep_type=dep_type)
+        return JSONResponse(_dep_tree_to_dict(tree))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@mcp.custom_route("/api/deps/graph", methods=["GET"])
+async def api_deps_graph(request) -> JSONResponse:
+    """Dependency graph in nodes/edges format for D3 visualization."""
+    file = request.query_params.get("file", "").strip()
+    if not file:
+        return JSONResponse({"error": "file query param is required"}, status_code=400)
+
+    index_name = request.query_params.get("index")
+    if not index_name:
+        return JSONResponse({"error": "index query param is required"}, status_code=400)
+
+    depth = min(int(request.query_params.get("depth", "3")), 20)
+
+    try:
+        from cocosearch.deps.query import get_dependency_tree, get_impact
+
+        seen: set[str] = set()
+        nodes: list[dict] = []
+        edges: list[dict] = []
+
+        # Forward dependencies (what this file imports)
+        fwd_tree = get_dependency_tree(index_name, file, max_depth=depth)
+        _tree_to_graph(fwd_tree, nodes, edges, seen, direction="forward")
+
+        # Reverse dependencies (what imports this file)
+        rev_tree = get_impact(index_name, file, max_depth=depth)
+        _tree_to_graph(rev_tree, nodes, edges, seen, direction="reverse")
+
+        return JSONResponse({"nodes": nodes, "edges": edges})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _dep_tree_to_dict(tree) -> dict:
+    """Convert a DependencyTree to a JSON-serializable dict."""
+    return tree.to_dict()
+
+
+def _tree_to_graph(
+    tree,
+    nodes: list[dict],
+    edges: list[dict],
+    seen: set[str],
+    direction: str = "forward",
+) -> None:
+    """Convert a DependencyTree to D3 nodes/edges format."""
+    if tree.file not in seen:
+        seen.add(tree.file)
+        node_dict = {"id": tree.file, "label": tree.file.rsplit("/", 1)[-1]}
+        if getattr(tree, "is_external", False):
+            node_dict["is_external"] = True
+        nodes.append(node_dict)
+    for child in tree.children:
+        edges.append(
+            {
+                "source": tree.file,
+                "target": child.file,
+                "dep_type": child.dep_type,
+                "direction": direction,
+            }
+        )
+        _tree_to_graph(child, nodes, edges, seen, direction=direction)
 
 
 def _get_treesitter_language(ext: str) -> str | None:
@@ -1311,6 +1540,13 @@ async def search_code(
             "Enabled by default. Set to False for exact line counts only."
         ),
     ] = True,
+    include_deps: Annotated[
+        bool,
+        Field(
+            description="Include dependency info (imports/dependents) for each result file. "
+            "When True, each result includes 'dependencies' and 'dependents' lists."
+        ),
+    ] = True,
 ) -> list[dict]:
     """Search indexed code using natural language.
 
@@ -1322,6 +1558,7 @@ async def search_code(
     Supports hybrid search combining vector similarity and keyword matching
     for better results when searching for code identifiers.
     If index_name is not provided, auto-detects from current working directory.
+    Set include_deps=True to attach dependency information to each result.
     """
     # Track root_path for search header (set during auto-detection)
     root_path: Path | None = None
@@ -1415,6 +1652,7 @@ async def search_code(
             use_hybrid=use_hybrid_search,
             symbol_type=symbol_type,
             symbol_name=symbol_name,
+            include_deps=include_deps,
         )
     except ValueError as e:
         # Symbol filter errors (invalid type or pre-v1.7 index)
@@ -1422,6 +1660,9 @@ async def search_code(
 
     # Create context expander for file caching
     expander = ContextExpander()
+
+    # Look up index metadata for header and path resolution
+    metadata = get_index_metadata(index_name)
 
     # Build header with project context when auto-detecting
     output = []
@@ -1432,19 +1673,24 @@ async def search_code(
             "index_name": index_name,
         }
         # Include last_indexed_at so LLM clients know when the index was built
-        metadata = get_index_metadata(index_name)
         if metadata and metadata.get("updated_at"):
             search_header["last_indexed_at"] = str(metadata["updated_at"])
         output.append(search_header)
+
+    # Resolve relative DB paths to absolute using the index's canonical_path
+    source_path = metadata.get("canonical_path") if metadata else None
 
     # Convert results to dicts with line numbers, content, and context.
     # Wrap in try/finally to ensure expander cache is always cleared,
     # preventing LRU cache leaks (up to 128 files) on exceptions.
     try:
         for r in results:
-            start_line = byte_to_line(r.filename, r.start_byte)
-            end_line = byte_to_line(r.filename, r.end_byte)
-            content = read_chunk_content(r.filename, r.start_byte, r.end_byte)
+            filepath = (
+                os.path.join(source_path, r.filename) if source_path else r.filename
+            )
+            start_line = byte_to_line(filepath, r.start_byte)
+            end_line = byte_to_line(filepath, r.end_byte)
+            content = read_chunk_content(filepath, r.start_byte, r.end_byte)
 
             # Get context if requested or smart context enabled
             context_before_text = ""
@@ -1457,7 +1703,7 @@ async def search_code(
 
                 before_lines, _match_lines, after_lines, _is_bof, _is_eof = (
                     expander.get_context_lines(
-                        r.filename,
+                        filepath,
                         start_line,
                         end_line,
                         context_before=context_before or 0,
@@ -1500,6 +1746,11 @@ async def search_code(
                 result_dict["vector_score"] = r.vector_score
             if r.keyword_score is not None:
                 result_dict["keyword_score"] = r.keyword_score
+
+            # Include dependency info when requested
+            if include_deps and r.dependencies is not None:
+                result_dict["dependencies"] = r.dependencies
+                result_dict["dependents"] = r.dependents
 
             output.append(result_dict)
     finally:
@@ -1818,14 +2069,156 @@ def index_codebase(
             stats["files_removed"] = file_stats.get("num_deletions", 0)
             stats["files_updated"] = file_stats.get("num_updates", 0)
 
-        return {
+        # Always extract dependencies after indexing
+        dep_stats = None
+        try:
+            from cocosearch.deps.extractor import extract_dependencies
+
+            dep_stats = extract_dependencies(index_name, path)
+        except Exception as e:
+            logger.warning(f"Dependency extraction failed: {e}")
+
+        result = {
             "success": True,
             "index_name": index_name,
             "path": path,
             "stats": stats,
         }
+        if dep_stats:
+            result["dep_stats"] = dep_stats
+        return result
     except Exception as e:
         return {"success": False, "error": f"Failed to index codebase: {e}"}
+
+
+# ============================================================================
+# Dependency graph MCP tools
+# ============================================================================
+
+
+@mcp.tool()
+async def get_file_dependencies(
+    file: Annotated[str, Field(description="File path relative to project root")],
+    ctx: Context,
+    index_name: Annotated[
+        str | None,
+        Field(description="Index name. Auto-detects from project if not provided."),
+    ] = None,
+    depth: Annotated[
+        int,
+        Field(description="Traversal depth. 1=direct only, >1=transitive"),
+    ] = 1,
+    dep_type: Annotated[
+        str | None,
+        Field(description="Filter by type: import, call, reference"),
+    ] = None,
+) -> dict:
+    """Get dependencies for a file (what it depends on).
+
+    With depth=1, returns direct dependencies as a flat list.
+    With depth>1, returns a transitive dependency tree showing
+    the full chain of dependencies up to the specified depth.
+
+    Use dep_type to filter by dependency kind (import, call, reference).
+    """
+    try:
+        from cocosearch.deps.query import (
+            get_dependencies as _get_deps,
+            get_dependency_tree,
+        )
+
+        if not index_name:
+            index_name = await _auto_detect_index(ctx)
+            if not index_name:
+                return {"error": "Could not auto-detect index. Provide index_name."}
+
+        depth = min(depth, 20)
+        if depth <= 1:
+            edges = _get_deps(index_name, file, dep_type=dep_type)
+            return {
+                "file": file,
+                "depth": 1,
+                "dependencies": [
+                    {
+                        "target_file": e.target_file,
+                        "target_symbol": e.target_symbol,
+                        "dep_type": e.dep_type,
+                        "module": e.metadata.get("module"),
+                    }
+                    for e in edges
+                ],
+                "total": len(edges),
+            }
+        else:
+            tree = get_dependency_tree(
+                index_name, file, max_depth=depth, dep_type=dep_type
+            )
+            return {
+                "file": file,
+                "depth": depth,
+                "tree": _dep_tree_to_dict(tree),
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def get_file_impact(
+    file: Annotated[str, Field(description="File path relative to project root")],
+    ctx: Context,
+    index_name: Annotated[
+        str | None,
+        Field(description="Index name. Auto-detects from project if not provided."),
+    ] = None,
+    depth: Annotated[
+        int,
+        Field(description="Traversal depth for transitive impact analysis (max 20)"),
+    ] = 3,
+    dep_type: Annotated[
+        str | None,
+        Field(description="Filter by type: import, call, reference"),
+    ] = None,
+) -> dict:
+    """Get impact analysis for a file (what would be affected if it changes).
+
+    Returns a tree of files that depend on the given file, transitively
+    up to the specified depth (max 20). Useful for understanding the blast
+    radius of changes.
+
+    Use dep_type to filter by dependency kind (import, call, reference).
+    """
+    try:
+        from cocosearch.deps.query import get_impact as _get_impact
+
+        if not index_name:
+            index_name = await _auto_detect_index(ctx)
+            if not index_name:
+                return {"error": "Could not auto-detect index. Provide index_name."}
+
+        depth = min(depth, 20)
+        tree = _get_impact(index_name, file, max_depth=depth, dep_type=dep_type)
+        return {
+            "file": file,
+            "depth": depth,
+            "impact_tree": _dep_tree_to_dict(tree),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def _auto_detect_index(ctx: Context) -> str | None:
+    """Try to auto-detect index name from project detection."""
+    try:
+        detected_path, _source = await _detect_project(ctx)
+        from cocosearch.management.context import find_project_root
+
+        project_root, detection_method = find_project_root(detected_path)
+        if project_root is not None:
+            return resolve_index_name(project_root, detection_method)
+        return derive_index_name(detected_path)
+    except Exception:
+        pass
+    return None
 
 
 def _open_browser(url: str, delay: float = 1.5):

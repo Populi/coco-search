@@ -56,6 +56,14 @@ from cocosearch.search.query import (
     SYMBOL_AWARE_LANGUAGES,
 )
 from cocosearch.search.repl import run_repl
+from cocosearch.deps.extractor import extract_dependencies
+from cocosearch.deps.query import (
+    get_dependencies,
+    get_dependents,
+    get_dep_stats,
+    get_dependency_tree,
+    get_impact,
+)
 
 
 def add_config_arg(
@@ -273,6 +281,18 @@ def index_command(args: argparse.Namespace) -> int:
             console.print(
                 "[dim]Index was created but path mapping was not updated.[/dim]"
             )
+
+        # Dependency extraction (if requested)
+        if getattr(args, "deps", False):
+            console.print("\n[bold]Extracting dependencies...[/bold]")
+            try:
+                dep_stats = extract_dependencies(index_name, codebase_path)
+                console.print(
+                    f"  [green]{dep_stats['edges_found']} edges[/green] from "
+                    f"{dep_stats['files_processed']} files"
+                )
+            except Exception as e:
+                console.print(f"  [yellow]Dependency extraction failed: {e}[/yellow]")
 
         return 0
 
@@ -1248,6 +1268,10 @@ def languages_command(args: argparse.Namespace) -> int:
     # Build language data from LANGUAGE_EXTENSIONS and handler registry
     languages = []
 
+    from cocosearch.deps.registry import get_all_extractor_language_ids
+
+    dep_language_ids = get_all_extractor_language_ids()
+
     # Standard languages from LANGUAGE_EXTENSIONS
     for lang, exts in sorted(LANGUAGE_EXTENSIONS.items()):
         # Format display name
@@ -1266,10 +1290,11 @@ def languages_command(args: argparse.Namespace) -> int:
                 "extensions": ", ".join(exts),
                 "symbols": lang in SYMBOL_AWARE_LANGUAGES,
                 "context": lang in CONTEXT_EXPANSION_LANGUAGES,
+                "deps": any(ext.lstrip(".") in dep_language_ids for ext in exts),
             }
         )
 
-    # Handler languages (derived from handler registry)
+    # Handler languages (derived from handler registry, skip duplicates)
     from cocosearch.handlers import get_registered_handlers
 
     display_names = {"hcl": "HCL", "dockerfile": "Dockerfile", "bash": "Bash"}
@@ -1278,12 +1303,18 @@ def languages_command(args: argparse.Namespace) -> int:
         get_registered_handlers(), key=lambda h: h.SEPARATOR_SPEC.language_name
     ):
         lang = handler.SEPARATOR_SPEC.language_name
+        if lang in LANGUAGE_EXTENSIONS:
+            continue
         languages.append(
             {
                 "name": display_names.get(lang, lang.title()),
                 "extensions": display_exts.get(lang, ", ".join(handler.EXTENSIONS)),
                 "symbols": lang in SYMBOL_AWARE_LANGUAGES,
                 "context": lang in CONTEXT_EXPANSION_LANGUAGES,
+                "deps": lang in dep_language_ids
+                or any(
+                    ext.lstrip(".") in dep_language_ids for ext in handler.EXTENSIONS
+                ),
             }
         )
 
@@ -1299,16 +1330,21 @@ def languages_command(args: argparse.Namespace) -> int:
         table.add_column("Extensions", style="dim")
         table.add_column("Symbols", justify="center")
         table.add_column("Context", justify="center")
+        table.add_column("Deps", justify="center")
 
         for lang in languages:
             symbol_mark = "[green]✓[/green]" if lang["symbols"] else "[dim]✗[/dim]"
             context_mark = "[green]✓[/green]" if lang["context"] else "[dim]✗[/dim]"
-            table.add_row(lang["name"], lang["extensions"], symbol_mark, context_mark)
+            deps_mark = "[green]✓[/green]" if lang["deps"] else "[dim]✗[/dim]"
+            table.add_row(
+                lang["name"], lang["extensions"], symbol_mark, context_mark, deps_mark
+            )
 
         console.print(table)
         console.print(
             "\n[dim]Symbol-aware languages support --symbol-type and --symbol-name filtering.\n"
-            "Context-aware languages support smart expansion to function/class boundaries.[/dim]"
+            "Context-aware languages support smart expansion to function/class boundaries.\n"
+            "Deps-aware languages support dependency graph extraction (deps tree, deps impact).[/dim]"
         )
 
     return 0
@@ -1325,7 +1361,10 @@ def grammars_command(args: argparse.Namespace) -> int:
     """
     console = Console()
 
+    from cocosearch.deps.registry import get_all_extractor_language_ids
     from cocosearch.handlers import get_registered_grammars
+
+    dep_language_ids = get_all_extractor_language_ids()
 
     grammars = []
     for handler in sorted(get_registered_grammars(), key=lambda h: h.GRAMMAR_NAME):
@@ -1334,6 +1373,7 @@ def grammars_command(args: argparse.Namespace) -> int:
                 "name": handler.GRAMMAR_NAME,
                 "base_language": handler.BASE_LANGUAGE,
                 "path_patterns": handler.PATH_PATTERNS,
+                "deps": handler.GRAMMAR_NAME in dep_language_ids,
             }
         )
 
@@ -1348,17 +1388,21 @@ def grammars_command(args: argparse.Namespace) -> int:
         table.add_column("Grammar", style="cyan", no_wrap=True)
         table.add_column("File Format", style="dim")
         table.add_column("Path Patterns", style="dim")
+        table.add_column("Deps", justify="center")
 
         for g in grammars:
+            deps_mark = "[green]✓[/green]" if g["deps"] else "[dim]✗[/dim]"
             table.add_row(
                 g["name"],
                 g["base_language"],
                 ", ".join(g["path_patterns"]),
+                deps_mark,
             )
 
         console.print(table)
         console.print(
-            "\n[dim]Grammars provide domain-specific chunking for specific file formats.[/dim]"
+            "\n[dim]Grammars provide domain-specific chunking for specific file formats.\n"
+            "Deps-aware grammars support dependency extraction for reference patterns.[/dim]"
         )
 
     return 0
@@ -1724,6 +1768,268 @@ def dashboard_command(args: argparse.Namespace) -> int:
         raise
 
 
+def deps_extract_command(args: argparse.Namespace) -> int:
+    """Execute the deps extract command.
+
+    Extracts dependency edges from all indexed files in the codebase.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success, 1 for error).
+    """
+    console = Console()
+
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+
+    resolver = ConfigResolver(project_config, config_path)
+    index_name, _ = _resolve_index_name(resolver, cli_value=args.name)
+
+    codebase_path = os.path.abspath(args.path)
+
+    try:
+        stats = extract_dependencies(index_name, codebase_path)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
+
+    console.print("[green]Dependency extraction complete[/green]")
+    console.print(f"  Files processed: {stats['files_processed']}")
+    console.print(f"  Files skipped:   {stats['files_skipped']}")
+    console.print(f"  Edges found:     {stats['edges_found']}")
+    console.print(f"  Errors:          {stats['errors']}")
+
+    return 0
+
+
+def deps_show_command(args: argparse.Namespace) -> int:
+    """Execute the deps show command.
+
+    Shows dependencies and dependents for a given file.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    console = Console()
+
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+
+    resolver = ConfigResolver(project_config, config_path)
+    index_name, _ = _resolve_index_name(resolver, cli_value=args.index)
+
+    try:
+        dependencies = get_dependencies(index_name, args.file)
+        dependents = get_dependents(index_name, args.file)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
+
+    console.print(
+        f"\n[bold]Dependencies[/bold] (what [cyan]{args.file}[/cyan] depends on):"
+    )
+    if dependencies:
+        for edge in dependencies:
+            target = (
+                edge.target_file
+                or edge.target_symbol
+                or edge.metadata.get("module")
+                or "unknown"
+            )
+            if edge.target_symbol and edge.metadata.get("module"):
+                target = f"{edge.metadata['module']}.{edge.target_symbol}"
+            console.print(f"  {edge.dep_type}: {target}")
+    else:
+        console.print("  [dim]None[/dim]")
+
+    console.print(
+        f"\n[bold]Dependents[/bold] (what depends on [cyan]{args.file}[/cyan]):"
+    )
+    if dependents:
+        for edge in dependents:
+            console.print(f"  {edge.dep_type}: {edge.source_file}")
+    else:
+        console.print("  [dim]None[/dim]")
+
+    return 0
+
+
+def deps_stats_command(args: argparse.Namespace) -> int:
+    """Execute the deps stats command.
+
+    Shows aggregate statistics for the dependency graph.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    console = Console()
+
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+
+    resolver = ConfigResolver(project_config, config_path)
+    index_name, _ = _resolve_index_name(resolver, cli_value=args.index)
+
+    stats = get_dep_stats(index_name)
+
+    console.print(f"\n[bold]Dependency Graph Statistics[/bold] ({index_name})")
+    console.print(f"  Total edges: {stats['total_edges']}")
+
+    return 0
+
+
+def deps_tree_command(args: argparse.Namespace) -> int:
+    """Execute the deps tree command.
+
+    Shows the forward dependency tree for a file.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    from rich.tree import Tree as RichTree
+
+    console = Console()
+
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+
+    resolver = ConfigResolver(project_config, config_path)
+    index_name, _ = _resolve_index_name(resolver, cli_value=args.index)
+
+    dep_type_filter = getattr(args, "type", None)
+    depth = getattr(args, "depth", 5)
+
+    try:
+        tree = get_dependency_tree(
+            index_name, args.file, max_depth=depth, dep_type=dep_type_filter
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
+
+    if getattr(args, "json", False):
+        import json
+
+        console.print(json.dumps(_tree_to_dict(tree), indent=2))
+        return 0
+
+    rich_tree = RichTree(f"[bold cyan]{tree.file}[/bold cyan]")
+    _build_rich_tree(rich_tree, tree)
+
+    console.print(f"\n[bold]Dependency Tree[/bold] (depth={depth})")
+    console.print(rich_tree)
+    return 0
+
+
+def deps_impact_command(args: argparse.Namespace) -> int:
+    """Execute the deps impact command.
+
+    Shows the reverse impact tree for a file.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        Exit code (0 for success).
+    """
+    from rich.tree import Tree as RichTree
+
+    console = Console()
+
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+
+    resolver = ConfigResolver(project_config, config_path)
+    index_name, _ = _resolve_index_name(resolver, cli_value=args.index)
+
+    dep_type_filter = getattr(args, "type", None)
+    depth = getattr(args, "depth", 5)
+
+    try:
+        tree = get_impact(
+            index_name, args.file, max_depth=depth, dep_type=dep_type_filter
+        )
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {e}")
+        return 1
+
+    if getattr(args, "json", False):
+        import json
+
+        console.print(json.dumps(_tree_to_dict(tree), indent=2))
+        return 0
+
+    rich_tree = RichTree(f"[bold cyan]{tree.file}[/bold cyan]")
+    _build_rich_tree(rich_tree, tree)
+
+    console.print(f"\n[bold]Impact Tree[/bold] (depth={depth})")
+    console.print(rich_tree)
+    return 0
+
+
+def _tree_to_dict(tree) -> dict:
+    """Convert a DependencyTree to a JSON-serializable dict."""
+    return tree.to_dict()
+
+
+def _build_rich_tree(rich_node, tree_node) -> None:
+    """Recursively build a Rich Tree from a DependencyTree."""
+    for child in tree_node.children:
+        if getattr(child, "is_external", False):
+            label = (
+                f"[dim]{child.dep_type}[/dim] → "
+                f"[dim italic]{child.file}[/dim italic]  (external)"
+            )
+            rich_node.add(label)
+        else:
+            label = f"[dim]{child.dep_type}[/dim] → {child.file}"
+            if child.symbol:
+                label += f" ([yellow]{child.symbol}[/yellow])"
+            child_rich = rich_node.add(label)
+            _build_rich_tree(child_rich, child)
+
+
 def main() -> None:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
@@ -1779,6 +2085,11 @@ def main() -> None:
         "--fresh",
         action="store_true",
         help="Clear existing index before re-indexing (start from clean state)",
+    )
+    index_parser.add_argument(
+        "--deps",
+        action="store_true",
+        help="Extract dependency graph after indexing",
     )
 
     # Search subcommand (also works as default action)
@@ -2152,6 +2463,99 @@ def main() -> None:
         help="Directory to scan for projects (default: current directory). [env: COCOSEARCH_PROJECTS_DIR]",
     )
 
+    # Deps subcommand
+    deps_parser = subparsers.add_parser(
+        "deps",
+        help="Dependency graph operations",
+        description="Extract, query, and analyze code dependencies.",
+    )
+    deps_subparsers = deps_parser.add_subparsers(dest="deps_command")
+
+    # deps extract
+    deps_extract_parser = deps_subparsers.add_parser(
+        "extract",
+        help="Extract dependencies from indexed codebase",
+    )
+    deps_extract_parser.add_argument("path", help="Path to the codebase directory")
+    add_config_arg(
+        deps_extract_parser,
+        "-n",
+        "--name",
+        config_key="indexName",
+        help_text="Index name",
+    )
+
+    # deps show
+    deps_show_parser = deps_subparsers.add_parser(
+        "show",
+        help="Show dependencies for a file",
+    )
+    deps_show_parser.add_argument("file", help="File path to inspect")
+    add_config_arg(
+        deps_show_parser,
+        "-n",
+        "--index",
+        config_key="indexName",
+        help_text="Index name",
+    )
+
+    # deps stats
+    deps_stats_parser = deps_subparsers.add_parser(
+        "stats",
+        help="Show dependency graph statistics",
+    )
+    add_config_arg(
+        deps_stats_parser,
+        "-n",
+        "--index",
+        config_key="indexName",
+        help_text="Index name",
+    )
+
+    # deps tree
+    deps_tree_parser = deps_subparsers.add_parser(
+        "tree",
+        help="Show forward dependency tree for a file",
+    )
+    deps_tree_parser.add_argument("file", help="File path to inspect")
+    deps_tree_parser.add_argument(
+        "--depth", type=int, default=5, help="Maximum traversal depth (default: 5)"
+    )
+    deps_tree_parser.add_argument(
+        "--type", help="Filter by dependency type (import, call, reference)"
+    )
+    deps_tree_parser.add_argument("--json", action="store_true", help="Output as JSON")
+    add_config_arg(
+        deps_tree_parser,
+        "-n",
+        "--index",
+        config_key="indexName",
+        help_text="Index name",
+    )
+
+    # deps impact
+    deps_impact_parser = deps_subparsers.add_parser(
+        "impact",
+        help="Show reverse impact tree for a file",
+    )
+    deps_impact_parser.add_argument("file", help="File path to inspect")
+    deps_impact_parser.add_argument(
+        "--depth", type=int, default=5, help="Maximum traversal depth (default: 5)"
+    )
+    deps_impact_parser.add_argument(
+        "--type", help="Filter by dependency type (import, call, reference)"
+    )
+    deps_impact_parser.add_argument(
+        "--json", action="store_true", help="Output as JSON"
+    )
+    add_config_arg(
+        deps_impact_parser,
+        "-n",
+        "--index",
+        config_key="indexName",
+        help_text="Index name",
+    )
+
     # Known subcommands for routing
     known_subcommands = (
         "index",
@@ -2166,6 +2570,7 @@ def main() -> None:
         "mcp",
         "config",
         "dashboard",
+        "deps",
         "-h",
         "--help",
         "--version",
@@ -2233,12 +2638,27 @@ def main() -> None:
         "check": config_check_command,
     }
 
+    _deps_command_registry: dict[str, Any] = {
+        "extract": deps_extract_command,
+        "show": deps_show_command,
+        "stats": deps_stats_command,
+        "tree": deps_tree_command,
+        "impact": deps_impact_command,
+    }
+
     if args.command == "config":
         handler = _config_command_registry.get(args.config_command)
         if handler:
             sys.exit(handler(args))
         else:
             config_parser.print_help()
+            sys.exit(1)
+    elif args.command == "deps":
+        handler = _deps_command_registry.get(args.deps_command)
+        if handler:
+            sys.exit(handler(args))
+        else:
+            deps_parser.print_help()
             sys.exit(1)
     else:
         handler = _command_registry.get(args.command)

@@ -58,7 +58,7 @@
 
 Coco[-S]earch is a local-first hybrid semantic code search tool. It combines vector similarity and keyword matching (via RRF fusion) to find code by meaning, not just text. Powered by [CocoIndex](https://github.com/cocoindex-io/cocoindex) for indexing, [Tree-sitter](https://tree-sitter.github.io/tree-sitter/) for syntax-aware chunking and symbol extraction, [PostgreSQL](https://www.postgresql.org/) with [pgvector](https://github.com/pgvector/pgvector) for storage, and [Ollama](https://ollama.com/) for local embeddings. No external APIs — everything runs on your machine.
 
-Available as a WEB dashboard, CLI, MCP server, or interactive REPL. Incremental indexing, `.gitignore`-aware. Supports 31+ languages with symbol-level filtering for 15+, plus domain-specific grammars for structured config files.
+Available as a WEB dashboard, CLI, MCP server, or interactive REPL. Incremental indexing, `.gitignore`-aware. Supports 32 languages with symbol-level filtering for 15+, plus domain-specific grammars for structured config files. Since 0.1.22: dependency graph extraction with forward trees (`deps tree`), reverse impact analysis (`deps impact`), and dependency-enriched search — for Python, JavaScript/TypeScript, Go, Docker Compose, GitHub Actions, Terraform, and Helm.
 
 <details>
 <summary>Screenshots</summary>
@@ -69,6 +69,18 @@ Available as a WEB dashboard, CLI, MCP server, or interactive REPL. Incremental 
 
 <p align="center">
   <img src="./screenshots/dashboard_search.png" alt="CocoSearch search results" width="960">
+</p>
+
+<p align="center">
+  <img src="./screenshots/dashboard_search_w_deps.png" alt="CocoSearch search results with dependency info" width="960">
+</p>
+
+<p align="center">
+  <img src="./screenshots/dashboard_search_deps_graph.png" alt="CocoSearch dependency graph visualization" width="960">
+</p>
+
+<p align="center">
+  <img src="./screenshots/dashboard_search_file_opened.png" alt="CocoSearch file viewer with syntax highlighting" width="960">
 </p>
 
 </details>
@@ -330,11 +342,13 @@ For codebases of meaningful size, CocoSearch reduces the number of MCP tool call
 ### Available MCP Tools
 
 - `index_codebase` -- index a directory for semantic search
-- `search_code` -- search indexed code with natural language queries
+- `search_code` -- search indexed code with natural language queries (optional `include_deps` for dependency info)
 - `analyze_query` -- pipeline diagnostics: understand why a query returns specific results
 - `list_indexes` -- list all available indexes
 - `index_stats` -- get statistics and parse health for an index
 - `clear_index` -- remove an index from the database
+- `get_file_dependencies` -- forward dependency query: what does a file depend on? (direct or transitive)
+- `get_file_impact` -- reverse impact query: what depends on this file? (transitive tree)
 
 ### Available Skills
 
@@ -347,6 +361,7 @@ For codebases of meaningful size, CocoSearch reduces the number of MCP tool call
 - **cocosearch-subway** ([SKILL.md](./skills/cocosearch-subway/SKILL.md)): Use when the user wants to visualize codebase structure as an interactive London Underground-style subway map. AI-generated visualization using CocoSearch tools for exploration.
 - **cocosearch-add-language** ([SKILL.md](./skills/cocosearch-add-language/SKILL.md)): Use when adding support for a new programming language or config format. Guides through handlers, symbol extraction, and context expansion with registration checklists.
 - **cocosearch-add-grammar** ([SKILL.md](./skills/cocosearch-add-grammar/SKILL.md)): Use when adding a grammar handler for domain-specific formats within a base language (e.g., GitHub Actions within YAML). Guides matches() design, separator spec, metadata extraction, and testing.
+- **cocosearch-add-extractor** ([SKILL.md](./skills/cocosearch-add-extractor/SKILL.md)): Use when adding a dependency extractor for a language or grammar. Guides through pre-checks, extractor implementation, optional module resolver, tests, and registration.
 
 ## How Search Works
 
@@ -400,44 +415,45 @@ For codebases of meaningful size, CocoSearch reduces the number of MCP tool call
 
 ## Supported Languages
 
-CocoSearch indexes 31 programming languages. Symbol-aware languages support `--symbol-type` and `--symbol-name` filtering. Context-aware languages support smart expansion to function/class boundaries.
+CocoSearch indexes 32 programming languages. Symbol-aware languages support `--symbol-type` and `--symbol-name` filtering. Context-aware languages support smart expansion to function/class boundaries. Deps-aware languages support dependency graph extraction.
 
 ```
-┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
-┃ Language   ┃ Extensions                  ┃ Symbols ┃ Context ┃
-┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
-│ C          │ .c, .h                      │    ✓    │    ✗    │
-│ C++        │ .cpp, .cc, .cxx, .hpp, .hxx │    ✓    │    ✗    │
-│ C#         │ .cs                         │    ✗    │    ✗    │
-│ CSS        │ .css, .scss                 │    ✓    │    ✗    │
-│ DTD        │ .dtd                        │    ✗    │    ✗    │
-│ Fortran    │ .f, .f90, .f95, .f03        │    ✗    │    ✗    │
-│ Go         │ .go                         │    ✓    │    ✓    │
-│ Groovy     │ .groovy, .gradle            │    ✗    │    ✗    │
-│ HTML       │ .html, .htm                 │    ✗    │    ✗    │
-│ Java       │ .java                       │    ✓    │    ✗    │
-│ Javascript │ .js, .mjs, .cjs, .jsx       │    ✓    │    ✓    │
-│ JSON       │ .json                       │    ✗    │    ✗    │
-│ Kotlin     │ .kt, .kts                   │    ✗    │    ✗    │
-│ Markdown   │ .md, .mdx                   │    ✗    │    ✗    │
-│ Pascal     │ .pas, .dpr                  │    ✗    │    ✗    │
-│ Php        │ .php                        │    ✓    │    ✗    │
-│ Python     │ .py, .pyw, .pyi             │    ✓    │    ✓    │
-│ R          │ .r, .R                      │    ✗    │    ✗    │
-│ Ruby       │ .rb                         │    ✓    │    ✗    │
-│ Rust       │ .rs                         │    ✓    │    ✓    │
-│ Scala      │ .scala                      │    ✓    │    ✓    │
-│ Solidity   │ .sol                        │    ✗    │    ✗    │
-│ SQL        │ .sql                        │    ✗    │    ✗    │
-│ Swift      │ .swift                      │    ✗    │    ✗    │
-│ TOML       │ .toml                       │    ✗    │    ✗    │
-│ Typescript │ .ts, .tsx, .mts, .cts       │    ✓    │    ✓    │
-│ XML        │ .xml                        │    ✗    │    ✗    │
-│ YAML       │ .yaml, .yml                 │    ✗    │    ✗    │
-│ Bash       │ .sh, .bash, .zsh            │    ✓    │    ✗    │
-│ Dockerfile │ Dockerfile                  │    ✓    │    ✓    │
-│ HCL        │ .hcl                        │    ✓    │    ✓    │
-└────────────┴─────────────────────────────┴─────────┴─────────┘
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━┓
+┃ Language   ┃ Extensions                  ┃ Symbols ┃ Context ┃ Deps ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━┩
+│ C          │ .c, .h                      │    ✓    │    ✗    │  ✗   │
+│ C++        │ .cpp, .cc, .cxx, .hpp, .hxx │    ✓    │    ✗    │  ✗   │
+│ C#         │ .cs                         │    ✗    │    ✗    │  ✗   │
+│ CSS        │ .css, .scss                 │    ✓    │    ✗    │  ✗   │
+│ DTD        │ .dtd                        │    ✗    │    ✗    │  ✗   │
+│ Fortran    │ .f, .f90, .f95, .f03        │    ✗    │    ✗    │  ✗   │
+│ Go         │ .go                         │    ✓    │    ✓    │  ✓   │
+│ Groovy     │ .groovy, .gradle            │    ✗    │    ✗    │  ✗   │
+│ HTML       │ .html, .htm                 │    ✗    │    ✗    │  ✗   │
+│ Java       │ .java                       │    ✓    │    ✗    │  ✗   │
+│ Javascript │ .js, .mjs, .cjs, .jsx       │    ✓    │    ✓    │  ✓   │
+│ JSON       │ .json                       │    ✗    │    ✗    │  ✗   │
+│ Kotlin     │ .kt, .kts                   │    ✗    │    ✗    │  ✗   │
+│ Markdown   │ .md, .mdx                   │    ✗    │    ✗    │  ✗   │
+│ Pascal     │ .pas, .dpr                  │    ✗    │    ✗    │  ✗   │
+│ Php        │ .php                        │    ✓    │    ✗    │  ✗   │
+│ Python     │ .py, .pyw, .pyi             │    ✓    │    ✓    │  ✓   │
+│ R          │ .r, .R                      │    ✗    │    ✗    │  ✗   │
+│ Ruby       │ .rb                         │    ✓    │    ✗    │  ✗   │
+│ Rust       │ .rs                         │    ✓    │    ✓    │  ✗   │
+│ Scala      │ .scala                      │    ✓    │    ✓    │  ✗   │
+│ Solidity   │ .sol                        │    ✗    │    ✗    │  ✗   │
+│ SQL        │ .sql                        │    ✗    │    ✗    │  ✗   │
+│ Swift      │ .swift                      │    ✗    │    ✗    │  ✗   │
+│ TOML       │ .toml                       │    ✗    │    ✗    │  ✗   │
+│ Typescript │ .ts, .tsx, .mts, .cts       │    ✓    │    ✓    │  ✓   │
+│ XML        │ .xml                        │    ✗    │    ✗    │  ✗   │
+│ YAML       │ .yaml, .yml                 │    ✗    │    ✗    │  ✗   │
+│ Bash       │ .sh, .bash, .zsh            │    ✓    │    ✗    │  ✗   │
+│ Dockerfile │ Dockerfile                  │    ✓    │    ✓    │  ✗   │
+│ Gotmpl     │ .tpl, .gotmpl               │    ✗    │    ✗    │  ✗   │
+│ HCL        │ .hcl                        │    ✓    │    ✓    │  ✗   │
+└────────────┴─────────────────────────────┴─────────┴─────────┴──────┘
 ```
 
 <details>
@@ -462,18 +478,18 @@ See [Adding Languages](./docs/adding-languages.md) for details on how these tier
 Beyond language-level support, CocoSearch recognizes **grammars** — domain-specific schemas within a base language. A **language** is matched by file extension (e.g., `.yaml` -> YAML, `.hcl` -> HCL), while a **grammar** is matched by file path and content patterns (e.g., `.github/workflows/ci.yml` containing `on:` + `jobs:` -> GitHub Actions, `*.tf` -> Terraform). Grammars provide structured chunking and richer metadata compared to generic text chunking.
 
 ```
-┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Grammar        ┃ File Format ┃ Path Patterns                                                                    ┃
-┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ docker-compose │ yaml        │ docker-compose*.yml, docker-compose*.yaml, compose*.yml, compose*.yaml           │
-│ github-actions │ yaml        │ .github/workflows/*.yml, .github/workflows/*.yaml                                │
-│ gitlab-ci      │ yaml        │ .gitlab-ci.yml                                                                   │
-│ helm-template  │ gotmpl      │ **/templates/*.yaml, **/templates/**/*.yaml, **/templates/*.yml,                 │
-│                │             │ **/templates/**/*.yml                                                            │
-│ helm-values    │ yaml        │ **/values.yaml, **/values-*.yaml                                                 │
-│ kubernetes     │ yaml        │ *.yaml, *.yml                                                                    │
-│ terraform      │ hcl         │ **/*.tf, **/*.tfvars                                                             │
-└────────────────┴─────────────┴──────────────────────────────────────────────────────────────────────────────────┘
+┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ Grammar        ┃ File Format ┃ Path Patterns                                                                    ┃ Deps ┃
+┡━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ docker-compose │ yaml        │ docker-compose*.yml, docker-compose*.yaml, compose*.yml, compose*.yaml           │  ✓   │
+│ github-actions │ yaml        │ .github/workflows/*.yml, .github/workflows/*.yaml                                │  ✓   │
+│ gitlab-ci      │ yaml        │ .gitlab-ci.yml                                                                   │  ✗   │
+│ helm-template  │ gotmpl      │ **/templates/*.yaml, **/templates/**/*.yaml, **/templates/*.yml,                 │  ✓   │
+│                │             │ **/templates/**/*.yml                                                            │      │
+│ helm-values    │ yaml        │ **/values.yaml, **/values-*.yaml                                                 │  ✓   │
+│ kubernetes     │ yaml        │ *.yaml, *.yml                                                                    │  ✗   │
+│ terraform      │ hcl         │ **/*.tf, **/*.tfvars                                                             │  ✓   │
+└────────────────┴─────────────┴──────────────────────────────────────────────────────────────────────────────────┴──────┘
 ```
 
 <details>

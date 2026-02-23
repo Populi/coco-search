@@ -58,6 +58,8 @@ class SearchResult:
     symbol_type: str | None = None
     symbol_name: str | None = None
     symbol_signature: str | None = None
+    dependencies: list | None = None
+    dependents: list | None = None
 
 
 # Language to file extension mapping
@@ -240,6 +242,7 @@ def search(
     symbol_type: str | list[str] | None = None,
     symbol_name: str | None = None,
     no_cache: bool = False,
+    include_deps: bool = False,
 ) -> list[SearchResult]:
     """Search for code similar to query.
 
@@ -262,12 +265,14 @@ def search(
             Can be a single string or list of types.
         symbol_name: Filter by symbol name using glob pattern (supports * and ?).
         no_cache: If True, bypass query cache (default False).
+        include_deps: If True, attach dependency and dependent info to results.
 
     Returns:
         List of SearchResult ordered by similarity (highest first).
         When hybrid search is used, results include match_type indicator.
         When symbol filtering is used, results include symbol_type, symbol_name,
         and symbol_signature fields.
+        When include_deps is True, results include dependencies and dependents lists.
 
     Raises:
         ValueError: If language_filter contains unrecognized language names,
@@ -398,6 +403,8 @@ def search(
                 query_embedding=None,  # Hybrid search doesn't expose query embedding
             )
 
+        if include_deps:
+            _enrich_with_deps(results, index_name)
         return results
 
     # Vector-only search (existing behavior)
@@ -501,4 +508,90 @@ def search(
             query_embedding=query_embedding,
         )
 
+    if include_deps:
+        _enrich_with_deps(results, index_name)
     return results
+
+
+def _enrich_with_deps(results: list[SearchResult], index_name: str) -> None:
+    """Attach dependency and dependent info to search results (in place).
+
+    For each unique filename in the results, queries forward and reverse
+    dependencies and attaches them as lists on the result objects.
+
+    If the deps table doesn't exist (deps never extracted), returns early
+    and leaves .dependencies/.dependents as None so the dashboard can
+    distinguish "no data" from "zero imports."
+    """
+    try:
+        from cocosearch.deps.query import (
+            get_dependencies as _get_deps,
+            get_dependents as _get_depnts,
+        )
+    except ImportError:
+        return
+
+    # Check deps table existence once (not per-file)
+    from cocosearch.deps.models import get_deps_table_name
+
+    table = get_deps_table_name(index_name)
+    try:
+        pool = get_connection_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables WHERE table_name = %s",
+                    (table,),
+                )
+                if cur.fetchone() is None:
+                    logger.debug(
+                        "Deps table %s does not exist — skipping enrichment",
+                        table,
+                    )
+                    return  # .dependencies stays None → dashboard hides badges
+    except Exception:
+        logger.warning("Failed to check deps table existence, skipping enrichment")
+        return
+
+    # Batch: collect unique filenames
+    unique_files: set[str] = set()
+    for r in results:
+        unique_files.add(r.filename)
+
+    # Query once per file
+    deps_cache: dict[str, list[dict]] = {}
+    depnts_cache: dict[str, list[dict]] = {}
+
+    for filename in unique_files:
+        try:
+            deps = _get_deps(index_name, filename)
+            deps_cache[filename] = [
+                {
+                    "target_file": e.target_file,
+                    "target_symbol": e.target_symbol,
+                    "dep_type": e.dep_type,
+                    "module": e.metadata.get("module"),
+                }
+                for e in deps
+            ]
+        except Exception:
+            logger.warning("Failed to query deps for %s: skipping", filename)
+            deps_cache[filename] = []
+
+        try:
+            depnts = _get_depnts(index_name, filename)
+            depnts_cache[filename] = [
+                {
+                    "source_file": e.source_file,
+                    "dep_type": e.dep_type,
+                }
+                for e in depnts
+            ]
+        except Exception:
+            logger.warning("Failed to query dependents for %s: skipping", filename)
+            depnts_cache[filename] = []
+
+    # Attach to results
+    for r in results:
+        r.dependencies = deps_cache.get(r.filename, [])
+        r.dependents = depnts_cache.get(r.filename, [])

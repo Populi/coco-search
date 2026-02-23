@@ -5,6 +5,7 @@ import { updateDashboard, updateSummaryCards } from './dashboard.js';
 export function setButtonsDisabled(disabled) {
     document.getElementById('reindexBtn').disabled = disabled;
     document.getElementById('freshIndexBtn').disabled = disabled;
+    document.getElementById('extractDepsBtn').disabled = disabled;
     document.getElementById('deleteIndexBtn').disabled = disabled;
     document.getElementById('stopIndexBtn').style.display = disabled ? 'inline-block' : 'none';
 }
@@ -145,7 +146,7 @@ export async function loadIndexList() {
         // Determine which index to select
         let selectedIndex = 0;
         let projectNotIndexed = false;
-        if (state.projectContext) {
+        if (state.projectContext && state.projectContext.has_project) {
             if (state.projectContext.is_indexed) {
                 // Find the project's index in the list and auto-select it
                 const matchIdx = state.allIndexes.findIndex(
@@ -165,8 +166,8 @@ export async function loadIndexList() {
             }
         }
 
-        if (projectNotIndexed) {
-            // Don't load dashboard data — just show the not-indexed banner
+        if (projectNotIndexed && state.allIndexes.length === 0) {
+            // No indexes at all — only show the not-indexed banner
         } else if (state.allIndexes.length > 0) {
             await loadDashboard(selectedIndex);
 
@@ -355,5 +356,38 @@ export async function indexCurrentProject() {
     } catch (err) {
         showStatusBanner('Error: ' + err.message, 'error');
         btn.disabled = false;
+    }
+}
+
+export async function extractDeps() {
+    const select = document.getElementById('indexSelect');
+    const indexIndex = parseInt(select.value);
+    const stats = state.allIndexes[indexIndex];
+    if (!stats) return;
+
+    setButtonsDisabled(true);
+    showStatusBanner('Extracting dependencies...', 'info');
+
+    try {
+        const resp = await fetch('/api/extract-deps', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                index_name: stats.name,
+                source_path: stats.source_path || (state.projectContext && state.projectContext.project_path)
+            })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            showStatusBanner('Error: ' + (data.error || 'Request failed'), 'error');
+            setButtonsDisabled(false);
+            return;
+        }
+        showStatusBanner(data.message, 'success');
+        setTimeout(hideStatusBanner, 5000);
+        setButtonsDisabled(false);
+    } catch (err) {
+        showStatusBanner('Error: ' + err.message, 'error');
+        setButtonsDisabled(false);
     }
 }

@@ -4,9 +4,12 @@ import { updateTabStatus } from './dashboard.js';
 import { toggleLanguageDetails, toggleGrammarDetails } from './dashboard.js';
 import {
     loadIndexList, onIndexSelectChange,
-    reindex, stopIndexing, deleteIndex, indexCurrentProject,
+    reindex, stopIndexing, deleteIndex, indexCurrentProject, extractDeps,
 } from './index-mgmt.js';
-import { executeSearch, clearSearch, toggleCodeExpand, openInEditor, viewFile, closeFileModal } from './search.js';
+import {
+    executeSearch, clearSearch, toggleCodeExpand, openInEditor, viewFile, closeFileModal,
+    toggleDepsPanel, toggleDepsOverflow, openDepsGraph, closeDepsGraph, onDepsDepthChange,
+} from './search.js';
 import { startLogStream, toggleLogPanel, clearLogPanel, scrollLogsToBottom } from './logs.js';
 
 // --- Expose functions needed by dynamically generated onclick handlers ---
@@ -17,6 +20,9 @@ window.copyPathWithFeedback = copyPathWithFeedback;
 window.copyToClipboard = copyToClipboard;
 window.openInEditor = openInEditor;
 window.viewFile = viewFile;
+window.toggleDepsPanel = toggleDepsPanel;
+window.toggleDepsOverflow = toggleDepsOverflow;
+window.openDepsGraph = openDepsGraph;
 
 // --- Wire up static DOM event listeners ---
 
@@ -28,6 +34,7 @@ document.getElementById('reindexBtn').addEventListener('click', () => reindex(fa
 document.getElementById('freshIndexBtn').addEventListener('click', () => reindex(true));
 document.getElementById('stopIndexBtn').addEventListener('click', stopIndexing);
 document.getElementById('deleteIndexBtn').addEventListener('click', deleteIndex);
+document.getElementById('extractDepsBtn').addEventListener('click', extractDeps);
 
 // Search
 document.getElementById('searchInput').addEventListener('keydown', (e) => {
@@ -65,8 +72,19 @@ document.getElementById('fileModalBackdrop').addEventListener('click', function(
     if (event.target === this) closeFileModal();
 });
 document.querySelector('.file-modal-close').addEventListener('click', closeFileModal);
+
+// Deps graph modal
+document.getElementById('depsGraphBackdrop').addEventListener('click', function(event) {
+    if (event.target === this) closeDepsGraph();
+});
+document.querySelector('.deps-graph-close').addEventListener('click', closeDepsGraph);
+document.getElementById('depsGraphDepth').addEventListener('change', onDepsDepthChange);
+
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeFileModal();
+    if (e.key === 'Escape') {
+        closeDepsGraph();
+        closeFileModal();
+    }
 });
 
 // --- Server heartbeat (auto-close on disconnect) ---

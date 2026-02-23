@@ -177,8 +177,12 @@ def register_index_path(
     Raises:
         ValueError: If index_name already maps to a different path (collision)
     """
-    # Resolve to canonical path
-    canonical = str(get_canonical_path(project_path))
+    # Resolve to canonical path — use main repo root for worktrees so all
+    # worktrees of the same repo share one canonical path (no collision).
+    from cocosearch.management.git import get_main_repo_root
+
+    main_root = get_main_repo_root(project_path)
+    canonical = str(get_canonical_path(main_root or project_path))
 
     # Ensure table exists
     ensure_metadata_table()

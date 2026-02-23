@@ -5,7 +5,7 @@ description: Use when adding support for a new programming language or config fo
 
 # Add Language Support with CocoSearch
 
-A structured workflow for adding language support to CocoSearch. Navigates up to 5 independent paths (handler, symbol extraction, grammar, context expansion, documentation) and ensures every registration point is covered.
+A structured workflow for adding language support to CocoSearch. Navigates up to 6 independent paths (handler, symbol extraction, grammar, context expansion, dependency extraction, documentation) and ensures every registration point is covered.
 
 **Philosophy:** The most common failure when adding language support is missing a registration step. This skill makes that impossible by tracking every step explicitly.
 
@@ -66,6 +66,7 @@ Present the applicable paths:
 | **C: Both A + B** | Not built-in for chunking but has tree-sitter support | ? |
 | **D: Grammar Handler** | Domain-specific schema sharing a base language (e.g., Ansible = YAML) | ? |
 | **E: Context Expansion** | Language IS in `tree-sitter-language-pack` -- enables `smart_context=True` boundary expansion | ? |
+| **F: Dependency Extractor** | Language has import/require/reference patterns -- enables `deps tree`, `deps impact`, and `get_file_dependencies`/`get_file_impact` MCP tools. Use `/cocosearch:cocosearch-add-extractor` for dedicated guidance. | ? |
 
 **Present to user:** "Based on my checks, here are the paths that apply: [list]. Ready to proceed?"
 
@@ -344,6 +345,20 @@ The `CONTEXT_EXPANSION_LANGUAGES` set is exported and referenced in search docs.
 
 **Checkpoint with user:** "Context expansion added for [language]. `smart_context=True` will now expand to [node types] boundaries."
 
+## Step 6b: Dependency Extractor (Path F)
+
+> **Skip this step** unless the language has import/require/reference patterns that can be extracted for dependency analysis.
+
+For dependency extractor implementation, use the dedicated skill:
+
+**Invoke:** `/cocosearch:cocosearch-add-extractor`
+
+This skill provides in-depth guidance for pre-checks, analog selection, extractor implementation, optional module resolver, tests, and registration.
+
+After completing the extractor skill, return here for Step 7 (count assertions) and Step 8 (documentation).
+
+**Checkpoint with user:** "Dependency extractor added for [language] with [N] import patterns. Tests pass. Ready for count assertions?"
+
 ## Step 7: Update Count Assertions
 
 > **This is the most commonly missed step.** Do not skip.
@@ -422,6 +437,10 @@ uv run pytest tests/unit/indexer/symbols/test_<language>.py -v
 # Grammar tests (if Path D)
 uv run pytest tests/unit/handlers/grammars/test_<grammar>.py -v
 
+# Dependency extractor tests (if Path F)
+uv run pytest tests/unit/deps/extractors/test_<language>.py -v
+uv run pytest tests/unit/deps/test_resolver.py -v
+
 # Registry count assertions
 uv run pytest tests/unit/handlers/test_registry.py -v
 uv run pytest tests/unit/handlers/test_grammar_registry.py -v
@@ -447,6 +466,7 @@ Paths completed:
   [x] Path B: Symbol Extraction -- src/cocosearch/indexer/queries/<language>.scm
   [ ] Path D: Grammar Handler -- not applicable
   [x] Path E: Context Expansion -- added to context_expander.py
+  [x] Path F: Dependency Extractor -- src/cocosearch/deps/extractors/<language>.py
 
 Registration points:
   [x] Handler file created (autodiscovered)
@@ -495,6 +515,14 @@ Complete checklist of all registration points. Check off each one as you complet
 **Context Expansion (Path E):**
 - [ ] `DEFINITION_NODE_TYPES` updated in `src/cocosearch/search/context_expander.py`
 - [ ] `EXTENSION_TO_LANGUAGE` updated in `src/cocosearch/search/context_expander.py`
+
+**Dependency Extractor (Path F):**
+- [ ] `src/cocosearch/deps/extractors/<language>.py` created (autodiscovered)
+- [ ] `LANGUAGES` set matches the language IDs from handler/grammar
+- [ ] Module resolver added to `src/cocosearch/deps/resolver.py` (if import resolution needed)
+- [ ] Resolver registered in `_RESOLVERS` dict (if added)
+- [ ] `tests/unit/deps/extractors/test_<language>.py` created
+- [ ] Resolver tests added to `tests/unit/deps/test_resolver.py` (if resolver added)
 
 **Count Assertions:**
 - [ ] `tests/unit/handlers/test_registry.py` -- handler count and spec count updated
