@@ -167,6 +167,35 @@ Add an `"env"` block (or `"environment"` for OpenCode) to your server config:
 }
 ```
 
+### Remote Embedding Providers
+
+By default, CocoSearch uses Ollama for embeddings. To use a remote provider (OpenAI, OpenRouter) with the MCP server, pass the provider and API key as environment variables during registration.
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope user \
+  --env COCOSEARCH_EMBEDDING_PROVIDER=openai \
+  --env COCOSEARCH_EMBEDDING_API_KEY=sk-... \
+  cocosearch -- \
+  uvx --from cocosearch cocosearch mcp --project-from-cwd
+```
+
+**Claude Desktop / OpenCode (JSON config):**
+
+Add to your server's `"env"` block (or `"environment"` for OpenCode):
+
+```json
+{
+  "env": {
+    "COCOSEARCH_EMBEDDING_PROVIDER": "openai",
+    "COCOSEARCH_EMBEDDING_API_KEY": "sk-..."
+  }
+}
+```
+
+Supported providers: `ollama` (default), `openai`, `openrouter`. With a remote provider, you do not need Ollama running — only PostgreSQL is required.
+
 ### Project Detection
 
 CocoSearch determines which project to search using the following priority chain:
