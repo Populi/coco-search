@@ -83,6 +83,26 @@ def add_filename_context(text: str, filename: str) -> str:
     return text
 
 
+_KNOWN_DIMENSIONS: dict[str, int] = {
+    "nomic-embed-text": 768,
+    "text-embedding-3-small": 1536,
+    "openai/text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "openai/text-embedding-3-large": 3072,
+}
+
+
+def _resolve_output_dimension(model: str) -> int | None:
+    """Resolve embedding output dimension from env var or known models map.
+
+    Priority: COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION env var > known map > None.
+    """
+    output_dim_str = os.environ.get("COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION")
+    if output_dim_str:
+        return int(output_dim_str)
+    return _KNOWN_DIMENSIONS.get(model)
+
+
 PROVIDER_MAP: dict[str, "cocoindex.LlmApiType"] = {
     "ollama": cocoindex.LlmApiType.OLLAMA,
     "openai": cocoindex.LlmApiType.OPENAI,
@@ -132,5 +152,9 @@ def code_to_embedding(
             kwargs["api_key"] = cocoindex.auth_registry.add_transient_auth_entry(
                 api_key
             )
+
+    output_dim = _resolve_output_dimension(model)
+    if output_dim is not None:
+        kwargs["output_dimension"] = output_dim
 
     return text.transform(cocoindex.functions.EmbedText(**kwargs))

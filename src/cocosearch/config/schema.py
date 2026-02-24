@@ -49,6 +49,7 @@ class EmbeddingSection(BaseModel):
 
     provider: str = Field(default="ollama")
     model: str | None = Field(default=None)
+    outputDimension: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_provider_and_defaults(self) -> "EmbeddingSection":

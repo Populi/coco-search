@@ -1,6 +1,78 @@
 """Tests for cocosearch.indexer.embedder module."""
 
+from unittest.mock import patch
+
 import cocoindex
+
+
+class TestKnownDimensions:
+    """Tests for _KNOWN_DIMENSIONS map."""
+
+    def test_nomic_embed_text(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert _KNOWN_DIMENSIONS["nomic-embed-text"] == 768
+
+    def test_openai_small(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert _KNOWN_DIMENSIONS["text-embedding-3-small"] == 1536
+
+    def test_openrouter_small(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert _KNOWN_DIMENSIONS["openai/text-embedding-3-small"] == 1536
+
+    def test_openai_large(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert _KNOWN_DIMENSIONS["text-embedding-3-large"] == 3072
+
+    def test_openrouter_large(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert _KNOWN_DIMENSIONS["openai/text-embedding-3-large"] == 3072
+
+    def test_unknown_model_not_in_map(self):
+        from cocosearch.indexer.embedder import _KNOWN_DIMENSIONS
+
+        assert "some-unknown-model" not in _KNOWN_DIMENSIONS
+
+
+class TestOutputDimensionResolution:
+    """Tests for _resolve_output_dimension helper."""
+
+    def test_known_model_returns_dimension(self):
+        """Known model returns its dimension from the map."""
+        from cocosearch.indexer.embedder import _resolve_output_dimension
+
+        assert _resolve_output_dimension("openai/text-embedding-3-small") == 1536
+
+    def test_nomic_returns_768(self):
+        """Ollama default model returns 768."""
+        from cocosearch.indexer.embedder import _resolve_output_dimension
+
+        assert _resolve_output_dimension("nomic-embed-text") == 768
+
+    def test_env_var_overrides_known_dimension(self):
+        """COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION env var overrides known map."""
+        from cocosearch.indexer.embedder import _resolve_output_dimension
+
+        with patch.dict("os.environ", {"COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION": "512"}):
+            assert _resolve_output_dimension("nomic-embed-text") == 512
+
+    def test_unknown_model_returns_none(self):
+        """Unknown model without env var returns None."""
+        from cocosearch.indexer.embedder import _resolve_output_dimension
+
+        assert _resolve_output_dimension("some-custom-model") is None
+
+    def test_unknown_model_with_env_var(self):
+        """Unknown model with env var returns dimension from env."""
+        from cocosearch.indexer.embedder import _resolve_output_dimension
+
+        with patch.dict("os.environ", {"COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION": "256"}):
+            assert _resolve_output_dimension("some-custom-model") == 256
 
 
 class TestProviderMap:
