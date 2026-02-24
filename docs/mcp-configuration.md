@@ -7,10 +7,10 @@ CocoSearch provides an MCP (Model Context Protocol) server for semantic code sea
 Start the infrastructure services:
 
 ```bash
-docker compose up -d
+docker compose --profile ollama up -d
 ```
 
-This gives you PostgreSQL (with pgvector) on port `5432` and Ollama (with `nomic-embed-text`) on port `11434`. The database connection defaults to `postgresql://cocosearch:cocosearch@localhost:5432/cocosearch`, which matches the Docker credentials -- no environment variables needed.
+This gives you PostgreSQL (with pgvector) on port `5432` and Ollama (with `nomic-embed-text`) on port `11434`. If using a remote embedding provider (OpenAI, OpenRouter), you only need PostgreSQL: `docker compose up -d`. The database connection defaults to `postgresql://cocosearch:cocosearch@localhost:5432/cocosearch`, which matches the Docker credentials -- no environment variables needed.
 
 ### Available MCP Tools
 

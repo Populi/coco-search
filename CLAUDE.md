@@ -14,7 +14,7 @@ CocoSearch is a local-first hybrid semantic code search tool powered by CocoInde
 ./dev-setup.sh
 
 # Or manually:
-docker compose up -d                    # PostgreSQL 17 + Ollama
+docker compose --profile ollama up -d    # PostgreSQL 17 + Ollama
 uv sync                                 # Install dependencies
 uv run cocosearch index .               # Index the codebase
 ```
@@ -83,18 +83,18 @@ uv run cocosearch mcp --project-from-cwd
 - **`mcp/server.py`** — MCP server exposing tools (search_code, analyze_query, index_codebase, get_file_dependencies, get_file_impact, etc.) + web dashboard with HTTP API (`/api/stats`, `/api/reindex`, `/api/search`, `/api/project`, `/api/projects`, `/api/index`, `/api/stop-indexing`, `/api/delete-index`, `/api/list`, `/api/analyze`, `/api/languages`, `/api/grammars`, `/api/open-in-editor`, `/api/file-content`, `/api/deps`, `/api/deps/impact`, `/api/deps/graph`, `/health`, `/api/heartbeat` SSE, `/api/logs` SSE)
 - **`mcp/log_stream.py`** — Real-time log capture for dashboard: `LogBuffer` ring buffer with SSE pub/sub, `BufferHandler` (logging.Handler), `StderrCapture` (tee wrapper for CocoIndex framework output), `setup_log_capture()` singleton lifecycle
 - **`mcp/project_detection.py`** — Auto-detect project from MCP Roots or CWD
-- **`indexer/`** — CocoIndex pipeline: file filtering (`file_filter.py`), Tree-sitter symbol extraction (16 languages via `.scm` queries in `indexer/queries/`), Ollama embedding, tsvector generation, parse health tracking, schema migration, preflight validation (`preflight.py`), progress reporting (`progress.py`)
+- **`indexer/`** — CocoIndex pipeline: file filtering (`file_filter.py`), Tree-sitter symbol extraction (16 languages via `.scm` queries in `indexer/queries/`), multi-provider embedding (`embedder.py` — Ollama/OpenAI/OpenRouter via `PROVIDER_MAP`), tsvector generation, parse health tracking, schema migration, preflight validation (`preflight.py` — conditional Ollama vs API key checks), progress reporting (`progress.py`)
 - **`indexer/flow.py`** — CocoIndex flow definition (the indexing pipeline)
 - **`search/`** — Hybrid search engine: RRF fusion of vector + keyword results, two-level LRU query cache (`cache.py` — exact + semantic similarity at cosine > 0.92), context expansion via Tree-sitter boundaries for 9 languages (`context_expander.py`, exports `CONTEXT_EXPANSION_LANGUAGES`), symbol/language filtering (`filters.py`), auto-detection of code identifiers for hybrid mode (`query_analyzer.py`), optional dependency enrichment (`include_deps` attaches direct dependencies/dependents to search results), interactive REPL (`repl.py`), result formatting (`formatter.py`), pipeline analysis with stage-by-stage diagnostics (`analyze.py`)
 - **`search/db.py`** — PostgreSQL connection pool (singleton) and query execution
-- **`config/`** — YAML config with 4-level precedence resolution (CLI > env > file > defaults), `${VAR}` substitution (`env_substitution.py`), Pydantic schema validation (`schema.py` with `extra="forbid"`, `strict=True`), user-friendly error formatting with fuzzy field suggestions (`errors.py`), env var validation (`env_validation.py`)
-- **`management/`** — Index lifecycle: discovery (`discovery.py`), stats (`stats.py`), clearing (`clear.py`), git-based naming (`git.py`), metadata with collision detection and status tracking (`metadata.py`), project root detection (`context.py`)
+- **`config/`** — YAML config with 4-level precedence resolution (CLI > env > file > defaults), `${VAR}` substitution (`env_substitution.py`), Pydantic schema validation (`schema.py` with `extra="forbid"`, `strict=True`, `EmbeddingSection` with `provider` field and provider-aware model defaults), user-friendly error formatting with fuzzy field suggestions (`errors.py`), env var validation (`env_validation.py`)
+- **`management/`** — Index lifecycle: discovery (`discovery.py`), stats (`stats.py`), clearing (`clear.py`), git-based naming (`git.py`), metadata with collision detection, status tracking, and embedding provider/model tracking (`metadata.py`), project root detection (`context.py`)
 - **`deps/`** — Dependency graph framework: pluggable extractors (`extractors/`), pluggable module resolvers (`resolver.py`), edge storage (`db.py`), extraction orchestrator (`extractor.py`), query API with transitive BFS traversal (`query.py`), data models (`models.py`), autodiscovery registry (`registry.py`). 8 extractors: Python imports, JavaScript/TypeScript (ES6 + CommonJS + re-exports), Go imports, Docker Compose (image/depends_on/extends), GitHub Actions (uses refs), Terraform (module sources), Helm (template includes, Chart.yaml subcharts, chart membership ownership with `is_subchart` indicator, subchart-to-parent links). 4 module resolvers: Python (dotted modules, `__init__.py`, relative imports, `src/`/`lib/` prefix stripping), JavaScript (extension probing, index files), Go (import path suffix matching), Terraform (local module sources). Query layer supports direct lookups (`get_dependencies`/`get_dependents`), transitive BFS trees (`get_dependency_tree`/`get_impact` with cycle detection and depth limits), and detailed stats (`get_dep_stats_detailed`). Three edge types: "import" (code imports), "call" (symbol calls), "reference" (grammar-level refs with `metadata.kind` for specifics — Helm uses `chart_member` for template/values→Chart.yaml ownership and `subchart_of` for subchart→parent chart links).
 - **`handlers/`** — Language-specific chunking (HCL, Go Template, Dockerfile, Bash, Scala, Groovy) and grammar handlers (`handlers/grammars/` — Helm Chart, Helm Template, Helm Values, GitHub Actions, GitLab CI, Docker Compose, Kubernetes, Terraform) with autodiscovery registry
 - **`dashboard/`** — Terminal (Rich) and web (Chart.js) dashboards. In stdio MCP mode, `server.py` launches uvicorn in a daemon thread running the MCP server's `sse_app()` — all routes are served from a single source of truth (no duplicated handlers). Web static assets are split into ES modules: `dashboard/web/static/index.html` (HTML only), `css/styles.css`, and `js/` with modules (`app.js` entry point, `state.js` shared state, `api.js`, `utils.js`, `charts.js`, `dashboard.js`, `index-mgmt.js`, `search.js`, `logs.js`). Static files served via `/static/{path}` route with path traversal protection.
 - **`.claude-plugin/`** — Claude Code plugin metadata: `plugin.json` (MCP server definition, version, keywords) and `marketplace.json` (marketplace listing). Versions must match `pyproject.toml` — the release workflow syncs them automatically.
 
-**Data flow:** Files → Tree-sitter parse → symbol extraction → chunking → Ollama embeddings → PostgreSQL (pgvector). Search queries → embedding → hybrid RRF (vector similarity + tsvector keyword) → context expansion → results.
+**Data flow:** Files → Tree-sitter parse → symbol extraction → chunking → embeddings (Ollama/OpenAI/OpenRouter) → PostgreSQL (pgvector). Search queries → embedding → hybrid RRF (vector similarity + tsvector keyword) → context expansion → results.
 
 **Key patterns:**
 
@@ -151,6 +151,8 @@ When exploring or searching this codebase, prefer CocoSearch MCP tools (`search_
 
 Project config via `cocosearch.yaml` (no leading dot) in project root. The `indexName` field sets the index name used by all commands. Environment variables prefixed with `COCOSEARCH_` (e.g., `COCOSEARCH_DATABASE_URL`, `COCOSEARCH_OLLAMA_URL`). Config keys map to env vars via camelCase→UPPER_SNAKE conversion (e.g., `indexName` → `COCOSEARCH_INDEX_NAME`). `COCOSEARCH_EDITOR` is a runtime env var (not a config field) for the dashboard's "Open in Editor" feature — falls back to `$EDITOR` then `$VISUAL`. See `.env.example` for available options.
 
+**Embedding providers:** CocoSearch supports multiple embedding providers: `ollama` (default, local), `openai`, and `openrouter`. Provider selection is via `COCOSEARCH_EMBEDDING_PROVIDER` env var or the `embedding.provider` field in `cocosearch.yaml`. Remote providers require `COCOSEARCH_EMBEDDING_API_KEY`. Default models: ollama→`nomic-embed-text`, openai→`text-embedding-3-small`, openrouter→`openai/text-embedding-3-small`. Index metadata tracks which provider/model was used; switching requires `--fresh` reindex.
+
 **Docker / client mode env vars:**
 - `COCOSEARCH_SERVER_URL` — When set, CLI forwards commands to the remote server instead of running locally (e.g., `http://localhost:3000`)
 - `COCOSEARCH_PATH_PREFIX` — Host↔container path rewriting for client mode (e.g., `~/GIT:/projects`)
@@ -160,9 +162,9 @@ Project config via `cocosearch.yaml` (no leading dot) in project root. The `inde
 
 **Docker deployment:**
 ```bash
-docker compose --profile app up --build          # Full stack (db + ollama + app)
-PROJECTS_DIR=~/GIT docker compose --profile app up  # Mount projects directory
-docker compose up -d                              # Infrastructure only (unchanged)
+docker compose --profile app --profile ollama up --build  # Full stack (local embeddings)
+docker compose --profile app up --build                   # DB + app only (remote embeddings)
+docker compose --profile ollama up -d                     # PostgreSQL + Ollama (local dev)
 ```
 
 **Docker MCP (SSE transport):** The container runs an SSE-based MCP server. Connect AI assistants directly via URL instead of spawning a local process:

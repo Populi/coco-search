@@ -144,7 +144,7 @@ This project was originally built for personal use — a solo experiment in loca
 git clone https://github.com/VioletCranberry/coco-search.git && cd coco-search
 # Docker volumes are bind-mounted to ./docker_data/ inside the repository,
 # so infrastructure must be started from the cloned repo directory.
-docker compose up -d
+docker compose --profile ollama up -d
 # 2. Verify services are ready.
 uvx cocosearch config check
 ```
@@ -179,12 +179,12 @@ claude mcp add --scope user cocosearch -- uvx cocosearch mcp --project-from-cwd
 
 ## Running in Docker
 
-Run CocoSearch as a centralized service — the host CLI forwards commands transparently over HTTP. The app container is opt-in via the `app` profile; `docker compose up` without it continues to start only PostgreSQL and Ollama, unchanged.
+Run CocoSearch as a centralized service — the host CLI forwards commands transparently over HTTP. Both the `app` and `ollama` services are opt-in via profiles; `docker compose up -d` starts only PostgreSQL.
 
 ```bash
 # Start the full stack (PostgreSQL + Ollama + CocoSearch app) detached.
 # PROJECTS_DIR sets which host directory is mounted as /projects inside the container.
-PROJECTS_DIR=~/GIT docker compose --profile app up --build --detach
+PROJECTS_DIR=~/GIT docker compose --profile app --profile ollama up --build --detach
 
 # Point the host CLI at the running server (no local Postgres/Ollama needed).
 # PATH_PREFIX rewrites host paths ↔ container paths in requests and results.
@@ -338,7 +338,7 @@ For codebases of meaningful size, CocoSearch reduces the number of MCP tool call
 
 ## Components
 
-- **Ollama** -- runs the embedding model (`nomic-embed-text`) locally.
+- **Embedding Provider** -- generates vector embeddings. Default: Ollama (`nomic-embed-text`) running locally. Also supports OpenAI and OpenRouter for remote embeddings.
 - **PostgreSQL + pgvector** -- stores code chunks and their vector embeddings for similarity search.
 - **CocoSearch** -- CLI and MCP server that coordinates indexing and search.
 
@@ -523,7 +523,38 @@ indexing:
     - "*.min.js"
   chunk_size: 1000 # bytes
   chunk_overlap: 300 # bytes
+
+embedding:
+  provider: ollama  # ollama (default), openai, openrouter
+  model: nomic-embed-text  # default depends on provider
 ```
+
+### Remote Embedding Providers
+
+By default, CocoSearch uses Ollama for local embeddings. You can switch to a remote provider (OpenAI, OpenRouter) for faster indexing without running a local model:
+
+```bash
+# Use OpenAI embeddings
+export COCOSEARCH_EMBEDDING_PROVIDER=openai
+export COCOSEARCH_EMBEDDING_API_KEY=sk-...
+uv run cocosearch index .
+
+# Use OpenRouter embeddings
+export COCOSEARCH_EMBEDDING_PROVIDER=openrouter
+export COCOSEARCH_EMBEDDING_API_KEY=sk-...
+uv run cocosearch index .
+
+# Verify config
+uv run cocosearch config check
+```
+
+| Provider | Default Model | API Key Required |
+|----------|--------------|-----------------|
+| `ollama` | `nomic-embed-text` | No (local) |
+| `openai` | `text-embedding-3-small` | Yes |
+| `openrouter` | `openai/text-embedding-3-small` | Yes |
+
+Switching providers on an existing index requires `--fresh` to reindex with the new embedding model.
 
 ## Testing
 

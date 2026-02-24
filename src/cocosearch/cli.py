@@ -219,6 +219,14 @@ def index_command(args: argparse.Namespace) -> int:
             branch_info += f" ({commit_hash})"
         console.print(f"[dim]Branch: {branch_info}[/dim]")
 
+    # Resolve embedding provider/model for metadata tracking
+    from cocosearch.config.schema import default_model_for_provider
+
+    _embed_provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    _embed_model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(_embed_provider)
+    )
+
     # Set status to 'indexing' before starting (best-effort)
     try:
         ensure_metadata_table()
@@ -228,6 +236,8 @@ def index_command(args: argparse.Namespace) -> int:
             branch=branch,
             commit_hash=commit_hash,
             branch_commit_count=branch_commit_count,
+            embedding_provider=_embed_provider,
+            embedding_model=_embed_model,
         )
         set_index_status(index_name, "indexing")
     except Exception:
@@ -273,7 +283,12 @@ def index_command(args: argparse.Namespace) -> int:
         # Register path-to-index mapping for collision detection
         try:
             register_index_path(
-                index_name, codebase_path, branch=branch, commit_hash=commit_hash
+                index_name,
+                codebase_path,
+                branch=branch,
+                commit_hash=commit_hash,
+                embedding_provider=_embed_provider,
+                embedding_model=_embed_model,
             )
         except ValueError as collision_error:
             # Collision detected - show warning but indexing already succeeded
@@ -1597,6 +1612,14 @@ def config_check_command(args: argparse.Namespace) -> int:
     # Show success + current values
     console.print("[green]Environment configuration is valid[/green]\n")
 
+    # Resolve embedding provider
+    from cocosearch.config.schema import default_model_for_provider
+
+    provider = os.getenv("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    provider_source = (
+        "environment" if os.getenv("COCOSEARCH_EMBEDDING_PROVIDER") else "default"
+    )
+
     # Display current environment variables
     table = Table(title="Environment Variables")
     table.add_column("Variable", style="cyan")
@@ -1608,19 +1631,24 @@ def config_check_command(args: argparse.Namespace) -> int:
     db_url_source = "environment" if os.getenv("COCOSEARCH_DATABASE_URL") else "default"
     table.add_row("COCOSEARCH_DATABASE_URL", mask_password(db_url), db_url_source)
 
-    # OLLAMA_URL (optional with default)
-    ollama_url = os.getenv("COCOSEARCH_OLLAMA_URL", DEFAULT_OLLAMA_URL)
-    ollama_url_source = (
-        "environment" if os.getenv("COCOSEARCH_OLLAMA_URL") else "default"
-    )
-    table.add_row("COCOSEARCH_OLLAMA_URL", ollama_url, ollama_url_source)
+    # EMBEDDING_PROVIDER
+    table.add_row("COCOSEARCH_EMBEDDING_PROVIDER", provider, provider_source)
 
-    # EMBEDDING_MODEL (optional with default)
-    embedding_model = os.getenv("COCOSEARCH_EMBEDDING_MODEL", "nomic-embed-text")
+    # EMBEDDING_MODEL (default depends on provider)
+    default_model = default_model_for_provider(provider)
+    embedding_model = os.getenv("COCOSEARCH_EMBEDDING_MODEL", default_model)
     embedding_model_source = (
         "environment" if os.getenv("COCOSEARCH_EMBEDDING_MODEL") else "default"
     )
     table.add_row("COCOSEARCH_EMBEDDING_MODEL", embedding_model, embedding_model_source)
+
+    if provider == "ollama":
+        # OLLAMA_URL (optional with default)
+        ollama_url = os.getenv("COCOSEARCH_OLLAMA_URL", DEFAULT_OLLAMA_URL)
+        ollama_url_source = (
+            "environment" if os.getenv("COCOSEARCH_OLLAMA_URL") else "default"
+        )
+        table.add_row("COCOSEARCH_OLLAMA_URL", ollama_url, ollama_url_source)
 
     console.print(table)
     console.print()
@@ -1632,7 +1660,6 @@ def config_check_command(args: argparse.Namespace) -> int:
     conn_table.add_column("Details", style="dim")
 
     has_failure = False
-    ollama_reachable = False
 
     # PostgreSQL
     try:
@@ -1646,41 +1673,59 @@ def config_check_command(args: argparse.Namespace) -> int:
             "Run: docker compose up -d",
         )
 
-    # Ollama
-    try:
-        check_ollama(ollama_url)
-        conn_table.add_row("Ollama", "[green]✓ connected[/green]", "")
-        ollama_reachable = True
-    except ConnectionError:
-        has_failure = True
-        conn_table.add_row(
-            "Ollama",
-            "[red]✗ unreachable[/red]",
-            "Run: docker compose up -d",
-        )
-
-    # Embedding model
-    if ollama_reachable:
+    if provider == "ollama":
+        # Ollama connectivity checks
+        ollama_reachable = False
         try:
-            check_ollama_model(ollama_url, embedding_model)
-            conn_table.add_row(
-                f"Model ({embedding_model})",
-                "[green]✓ available[/green]",
-                "",
-            )
+            check_ollama(ollama_url)
+            conn_table.add_row("Ollama", "[green]✓ connected[/green]", "")
+            ollama_reachable = True
         except ConnectionError:
             has_failure = True
             conn_table.add_row(
+                "Ollama",
+                "[red]✗ unreachable[/red]",
+                "Run: docker compose --profile ollama up -d",
+            )
+
+        # Embedding model
+        if ollama_reachable:
+            try:
+                check_ollama_model(ollama_url, embedding_model)
+                conn_table.add_row(
+                    f"Model ({embedding_model})",
+                    "[green]✓ available[/green]",
+                    "",
+                )
+            except ConnectionError:
+                has_failure = True
+                conn_table.add_row(
+                    f"Model ({embedding_model})",
+                    "[red]✗ not found[/red]",
+                    f"Run: ollama pull {embedding_model}",
+                )
+        else:
+            conn_table.add_row(
                 f"Model ({embedding_model})",
-                "[red]✗ not found[/red]",
-                f"Run: ollama pull {embedding_model}",
+                "[dim]- skipped[/dim]",
+                "Ollama is unreachable",
             )
     else:
-        conn_table.add_row(
-            f"Model ({embedding_model})",
-            "[dim]- skipped[/dim]",
-            "Ollama is unreachable",
-        )
+        # Remote provider: check API key
+        api_key = os.getenv("COCOSEARCH_EMBEDDING_API_KEY")
+        if api_key:
+            conn_table.add_row(
+                "API Key",
+                "[green]✓ set[/green]",
+                f"Provider: {provider}",
+            )
+        else:
+            has_failure = True
+            conn_table.add_row(
+                "API Key",
+                "[red]✗ missing[/red]",
+                "Set COCOSEARCH_EMBEDDING_API_KEY",
+            )
 
     console.print(conn_table)
 
