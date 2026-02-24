@@ -1300,6 +1300,197 @@ class TestIndexStatsGrammarsField:
         assert d["grammars"] == grammar_data
 
 
+class TestIndexStatsEmbeddingFields:
+    """Tests for IndexStats embedding_provider and embedding_model fields."""
+
+    def test_default_embedding_fields_are_none(self):
+        """embedding_provider and embedding_model default to None."""
+        stats = IndexStats(
+            name="test",
+            file_count=10,
+            chunk_count=50,
+            storage_size=1024,
+            storage_size_pretty="1.0 KB",
+            created_at=None,
+            updated_at=None,
+            is_stale=False,
+            staleness_days=0,
+            languages=[],
+            symbols={},
+            warnings=[],
+            parse_stats={},
+            source_path=None,
+            status=None,
+            indexing_elapsed_seconds=None,
+            repo_url=None,
+        )
+        assert stats.embedding_provider is None
+        assert stats.embedding_model is None
+
+    def test_embedding_fields_set_explicitly(self):
+        """embedding_provider and embedding_model can be set."""
+        stats = IndexStats(
+            name="test",
+            file_count=10,
+            chunk_count=50,
+            storage_size=1024,
+            storage_size_pretty="1.0 KB",
+            created_at=None,
+            updated_at=None,
+            is_stale=False,
+            staleness_days=0,
+            languages=[],
+            symbols={},
+            warnings=[],
+            parse_stats={},
+            source_path=None,
+            status=None,
+            indexing_elapsed_seconds=None,
+            repo_url=None,
+            embedding_provider="openai",
+            embedding_model="text-embedding-3-small",
+        )
+        assert stats.embedding_provider == "openai"
+        assert stats.embedding_model == "text-embedding-3-small"
+
+    def test_to_dict_includes_embedding_fields(self):
+        """to_dict() includes embedding_provider and embedding_model."""
+        stats = IndexStats(
+            name="test",
+            file_count=10,
+            chunk_count=50,
+            storage_size=1024,
+            storage_size_pretty="1.0 KB",
+            created_at=None,
+            updated_at=None,
+            is_stale=False,
+            staleness_days=0,
+            languages=[],
+            symbols={},
+            warnings=[],
+            parse_stats={},
+            source_path=None,
+            status=None,
+            indexing_elapsed_seconds=None,
+            repo_url=None,
+            embedding_provider="ollama",
+            embedding_model="nomic-embed-text",
+        )
+        d = stats.to_dict()
+        assert d["embedding_provider"] == "ollama"
+        assert d["embedding_model"] == "nomic-embed-text"
+
+
+class TestComprehensiveStatsEmbeddingPropagation:
+    """Tests that get_comprehensive_stats propagates embedding fields from metadata."""
+
+    def test_propagates_embedding_from_metadata(self):
+        """get_comprehensive_stats extracts embedding_provider/model from metadata."""
+        with (
+            patch("cocosearch.management.stats.get_stats") as mock_stats,
+            patch("cocosearch.management.stats.get_language_stats", return_value=[]),
+            patch("cocosearch.management.stats.get_symbol_stats", return_value={}),
+            patch("cocosearch.management.stats.get_parse_stats", return_value={}),
+            patch("cocosearch.management.stats.get_grammar_stats", return_value=[]),
+            patch(
+                "cocosearch.management.stats.check_staleness", return_value=(False, 0)
+            ),
+            patch(
+                "cocosearch.management.stats.get_index_metadata",
+                return_value={
+                    "index_name": "test",
+                    "canonical_path": "/path",
+                    "created_at": None,
+                    "updated_at": None,
+                    "status": "indexed",
+                    "branch": "main",
+                    "commit_hash": "abc1234",
+                    "branch_commit_count": 100,
+                    "embedding_provider": "openai",
+                    "embedding_model": "text-embedding-3-small",
+                },
+            ),
+            patch("cocosearch.management.stats.auto_recover_stale_indexing"),
+            patch("cocosearch.management.stats.collect_warnings", return_value=[]),
+            patch("cocosearch.management.git.get_repo_url", return_value=None),
+            patch(
+                "cocosearch.management.stats.check_branch_staleness",
+                return_value={
+                    "branch_changed": False,
+                    "commits_changed": False,
+                    "indexed_branch": "main",
+                    "indexed_commit": "abc1234",
+                    "current_branch": "main",
+                    "current_commit": "abc1234",
+                    "commits_behind": 0,
+                },
+            ),
+        ):
+            mock_stats.return_value = {
+                "name": "test",
+                "file_count": 10,
+                "chunk_count": 50,
+                "storage_size": 1024,
+                "storage_size_pretty": "1.0 KB",
+            }
+            result = get_comprehensive_stats("test")
+
+        assert result.embedding_provider == "openai"
+        assert result.embedding_model == "text-embedding-3-small"
+
+    def test_embedding_none_when_not_in_metadata(self):
+        """embedding fields are None when metadata lacks them."""
+        with (
+            patch("cocosearch.management.stats.get_stats") as mock_stats,
+            patch("cocosearch.management.stats.get_language_stats", return_value=[]),
+            patch("cocosearch.management.stats.get_symbol_stats", return_value={}),
+            patch("cocosearch.management.stats.get_parse_stats", return_value={}),
+            patch("cocosearch.management.stats.get_grammar_stats", return_value=[]),
+            patch(
+                "cocosearch.management.stats.check_staleness", return_value=(False, 0)
+            ),
+            patch(
+                "cocosearch.management.stats.get_index_metadata",
+                return_value={
+                    "index_name": "test",
+                    "canonical_path": "/path",
+                    "created_at": None,
+                    "updated_at": None,
+                    "status": "indexed",
+                    "branch": "main",
+                    "commit_hash": "abc1234",
+                    "branch_commit_count": 100,
+                },
+            ),
+            patch("cocosearch.management.stats.auto_recover_stale_indexing"),
+            patch("cocosearch.management.stats.collect_warnings", return_value=[]),
+            patch("cocosearch.management.git.get_repo_url", return_value=None),
+            patch(
+                "cocosearch.management.stats.check_branch_staleness",
+                return_value={
+                    "branch_changed": False,
+                    "commits_changed": False,
+                    "indexed_branch": "main",
+                    "indexed_commit": "abc1234",
+                    "current_branch": "main",
+                    "current_commit": "abc1234",
+                    "commits_behind": 0,
+                },
+            ),
+        ):
+            mock_stats.return_value = {
+                "name": "test",
+                "file_count": 10,
+                "chunk_count": 50,
+                "storage_size": 1024,
+                "storage_size_pretty": "1.0 KB",
+            }
+            result = get_comprehensive_stats("test")
+
+        assert result.embedding_provider is None
+        assert result.embedding_model is None
+
+
 class TestComprehensiveStatsAutoRecovery:
     """Tests that get_comprehensive_stats triggers auto-recovery of stale indexing."""
 

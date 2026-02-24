@@ -64,6 +64,16 @@ export function updateSummaryCards(stats) {
         repoUrlEl.style.display = 'none';
     }
 
+    // Embedding info in status line
+    const embeddingEl = document.getElementById('embeddingInfo');
+    if (stats.embedding_provider) {
+        const model = stats.embedding_model || 'default';
+        embeddingEl.textContent = 'PROVIDER: ' + stats.embedding_provider + ' MODEL: ' + model;
+        embeddingEl.style.display = '';
+    } else {
+        embeddingEl.style.display = 'none';
+    }
+
     // Branch badge
     const branchBadge = document.getElementById('branchBadge');
     if (stats.branch) {
