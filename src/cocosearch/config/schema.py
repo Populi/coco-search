@@ -63,6 +63,14 @@ class EmbeddingSection(BaseModel):
         return self
 
 
+class LoggingSection(BaseModel):
+    """Configuration for logging behavior."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    file: bool = Field(default=False)
+
+
 class CocoSearchConfig(BaseModel):
     """Root configuration model for CocoSearch."""
 
@@ -72,3 +80,4 @@ class CocoSearchConfig(BaseModel):
     indexing: IndexingSection = Field(default_factory=IndexingSection)
     search: SearchSection = Field(default_factory=SearchSection)
     embedding: EmbeddingSection = Field(default_factory=EmbeddingSection)
+    logging: LoggingSection = Field(default_factory=LoggingSection)

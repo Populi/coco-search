@@ -7,6 +7,7 @@ from cocosearch.config import (
     CocoSearchConfig,
     EmbeddingSection,
     IndexingSection,
+    LoggingSection,
     SearchSection,
 )
 
@@ -163,6 +164,32 @@ class TestEmbeddingSection:
             EmbeddingSection(provider="invalid-provider")
 
 
+class TestLoggingSection:
+    """Test LoggingSection model."""
+
+    def test_default_values(self):
+        """Test that default values are set correctly."""
+        section = LoggingSection()
+        assert section.file is False
+
+    def test_file_enabled(self):
+        """Test enabling file logging."""
+        section = LoggingSection(file=True)
+        assert section.file is True
+
+    def test_unknown_field_rejected(self):
+        """Test that unknown fields are rejected (extra='forbid')."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoggingSection(unknownField="value")
+        assert "Extra inputs are not permitted" in str(exc_info.value)
+
+    def test_type_validation_strict(self):
+        """Test strict type validation (string 'true' rejected for bool)."""
+        with pytest.raises(ValidationError) as exc_info:
+            LoggingSection(file="true")
+        assert "Input should be a valid boolean" in str(exc_info.value)
+
+
 class TestCocoSearchConfig:
     """Test root CocoSearchConfig model."""
 
@@ -173,6 +200,7 @@ class TestCocoSearchConfig:
         assert isinstance(config.indexing, IndexingSection)
         assert isinstance(config.search, SearchSection)
         assert isinstance(config.embedding, EmbeddingSection)
+        assert isinstance(config.logging, LoggingSection)
 
     def test_valid_config_all_fields(self):
         """Test valid configuration with all fields specified."""
@@ -214,6 +242,16 @@ class TestCocoSearchConfig:
         # The error comes from IndexingSection validation
         assert "Extra inputs are not permitted" in str(exc_info.value)
 
+    def test_logging_section_defaults(self):
+        """Test that logging section defaults are correct."""
+        config = CocoSearchConfig()
+        assert config.logging.file is False
+
+    def test_logging_section_enabled(self):
+        """Test enabling logging.file via dict."""
+        config = CocoSearchConfig(logging={"file": True})
+        assert config.logging.file is True
+
     def test_model_dump_serialization(self):
         """Test that model_dump produces correct dictionary."""
         config = CocoSearchConfig()
@@ -223,4 +261,6 @@ class TestCocoSearchConfig:
         assert "indexing" in data
         assert "search" in data
         assert "embedding" in data
+        assert "logging" in data
         assert isinstance(data["indexing"], dict)
+        assert isinstance(data["logging"], dict)

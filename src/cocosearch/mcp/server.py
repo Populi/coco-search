@@ -2267,7 +2267,22 @@ def run_server(
     # Start capturing logs for the dashboard log panel
     from cocosearch.mcp.log_stream import setup_log_capture
 
-    setup_log_capture()
+    log_file_enabled = os.environ.get("COCOSEARCH_LOG_FILE", "").lower() in (
+        "1",
+        "true",
+    )
+    try:
+        from cocosearch.config import find_config_file, load_config
+
+        cfg_path = find_config_file()
+        if cfg_path:
+            cfg = load_config(cfg_path)
+            if cfg.logging.file:
+                log_file_enabled = True
+    except Exception:
+        pass
+
+    setup_log_capture(log_file=log_file_enabled)
 
     # Dashboard auto-open (opt-out via COCOSEARCH_NO_DASHBOARD=1)
     no_dashboard = os.environ.get("COCOSEARCH_NO_DASHBOARD", "").strip() == "1"
