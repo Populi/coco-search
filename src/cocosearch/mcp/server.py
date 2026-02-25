@@ -73,6 +73,7 @@ from cocosearch.search.context_expander import ContextExpander  # noqa: E402
 
 def _get_cs_log():
     from cocosearch.logging import cs_log
+
     return cs_log
 
 
@@ -1502,14 +1503,18 @@ def _truncate(value, max_len=200):
 def log_mcp_tool(func):
     """Decorator that logs MCP tool entry and exit with cs_log.mcp()."""
     if asyncio.iscoroutinefunction(func):
+
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
             from cocosearch.logging import cs_log
 
             tool_name = func.__name__
             # Extract key params (skip 'ctx' and internal args)
-            key_params = {k: _truncate(v) for k, v in kwargs.items()
-                          if k != "ctx" and v is not None}
+            key_params = {
+                k: _truncate(v)
+                for k, v in kwargs.items()
+                if k != "ctx" and v is not None
+            }
             cs_log.mcp(f"{tool_name} called", **key_params)
 
             start = _time.monotonic()
@@ -1519,7 +1524,11 @@ def log_mcp_tool(func):
 
                 # Summarize result
                 if isinstance(result, list):
-                    cs_log.mcp(f"{tool_name} completed", results=len(result), latency_ms=elapsed_ms)
+                    cs_log.mcp(
+                        f"{tool_name} completed",
+                        results=len(result),
+                        latency_ms=elapsed_ms,
+                    )
                 elif isinstance(result, dict):
                     cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
                 else:
@@ -1527,19 +1536,28 @@ def log_mcp_tool(func):
                 return result
             except Exception as e:
                 elapsed_ms = round((_time.monotonic() - start) * 1000)
-                cs_log.mcp(f"{tool_name} failed", level="ERROR",
-                           error=_truncate(str(e)), latency_ms=elapsed_ms)
+                cs_log.mcp(
+                    f"{tool_name} failed",
+                    level="ERROR",
+                    error=_truncate(str(e)),
+                    latency_ms=elapsed_ms,
+                )
                 raise
+
         return wrapper
     else:
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             from cocosearch.logging import cs_log
 
             tool_name = func.__name__
             # Extract key params (skip 'ctx' and internal args)
-            key_params = {k: _truncate(v) for k, v in kwargs.items()
-                          if k != "ctx" and v is not None}
+            key_params = {
+                k: _truncate(v)
+                for k, v in kwargs.items()
+                if k != "ctx" and v is not None
+            }
             cs_log.mcp(f"{tool_name} called", **key_params)
 
             start = _time.monotonic()
@@ -1549,7 +1567,11 @@ def log_mcp_tool(func):
 
                 # Summarize result
                 if isinstance(result, list):
-                    cs_log.mcp(f"{tool_name} completed", results=len(result), latency_ms=elapsed_ms)
+                    cs_log.mcp(
+                        f"{tool_name} completed",
+                        results=len(result),
+                        latency_ms=elapsed_ms,
+                    )
                 elif isinstance(result, dict):
                     cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
                 else:
@@ -1557,9 +1579,14 @@ def log_mcp_tool(func):
                 return result
             except Exception as e:
                 elapsed_ms = round((_time.monotonic() - start) * 1000)
-                cs_log.mcp(f"{tool_name} failed", level="ERROR",
-                           error=_truncate(str(e)), latency_ms=elapsed_ms)
+                cs_log.mcp(
+                    f"{tool_name} failed",
+                    level="ERROR",
+                    error=_truncate(str(e)),
+                    latency_ms=elapsed_ms,
+                )
                 raise
+
         return wrapper
 
 
@@ -2410,7 +2437,9 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
-        _get_cs_log().system("Server listening", transport="sse", url=f"http://{host}:{port}")
+        _get_cs_log().system(
+            "Server listening", transport="sse", url=f"http://{host}:{port}"
+        )
         mcp.run(transport="sse")
     elif transport == "http":
         # Suppress verbose per-request access logs from uvicorn
@@ -2425,7 +2454,9 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
-        _get_cs_log().system("Server listening", transport="http", url=f"http://{host}:{port}")
+        _get_cs_log().system(
+            "Server listening", transport="http", url=f"http://{host}:{port}"
+        )
         mcp.run(transport="streamable-http")
     else:
         # Should not reach here if CLI validates

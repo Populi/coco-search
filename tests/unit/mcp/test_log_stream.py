@@ -464,6 +464,24 @@ class TestRichLogHandler:
         captured = capsys.readouterr()
         assert "timeout" in captured.err or "error" in captured.err
 
+    def test_custom_file_bypasses_stderr(self):
+        """RichLogHandler(file=...) writes to the given file, not stderr."""
+        import io
+
+        buf = io.StringIO()
+        handler = RichLogHandler(file=buf)
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="INFO",
+            category="search",
+            message="Custom output",
+            fields={},
+        )
+        handler.handle(entry)
+        output = buf.getvalue()
+        assert "Custom output" in output
+        assert "INFO" in output
+
 
 # ---------------------------------------------------------------------------
 # FileLogHandler

@@ -212,11 +212,20 @@ _LEVEL_COLORS = {
 
 
 class RichLogHandler:
-    """Prints structured LogEntry records to stderr using Rich markup."""
+    """Prints structured LogEntry records to stderr using Rich markup.
 
-    def __init__(self) -> None:
+    Accepts an optional *file* argument so that the Rich Console writes to
+    the **original** stderr (before ``StderrCapture`` wrapping).  This
+    prevents a deadlock: ``LogBuffer.append()`` holds its lock while calling
+    handlers → ``RichLogHandler.handle()`` writes to stderr → if stderr is
+    ``StderrCapture`` it calls ``LogBuffer.append()`` again → deadlock on the
+    same lock.
+    """
+
+    def __init__(self, file=None) -> None:
         from rich.console import Console
-        self._console = Console(stderr=True)
+
+        self._console = Console(stderr=True, file=file)
 
     def handle(self, entry: LogEntry) -> None:
         ts = datetime.fromtimestamp(entry.timestamp).strftime("%H:%M:%S")
@@ -307,13 +316,17 @@ def setup_log_capture(*, enable_rich: bool = True, log_file: bool = False) -> Lo
     )
     logging.getLogger().addHandler(handler)
 
+    # Save original stderr BEFORE wrapping so RichLogHandler can bypass
+    # StderrCapture and avoid a re-entrant deadlock on LogBuffer._lock.
+    original_stderr = sys.stderr
+
     # Wrap stderr to capture CocoIndex framework output
     if not isinstance(sys.stderr, StderrCapture):
         sys.stderr = StderrCapture(sys.stderr, _log_buffer)  # type: ignore[assignment]
 
-    # Rich terminal handler
+    # Rich terminal handler (writes to original stderr to avoid deadlock)
     if enable_rich:
-        _log_buffer.add_handler(RichLogHandler())
+        _log_buffer.add_handler(RichLogHandler(file=original_stderr))
 
     # Rotating file handler
     if log_file:

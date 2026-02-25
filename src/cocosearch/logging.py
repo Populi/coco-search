@@ -43,7 +43,9 @@ class CsLog:
     def _get_buffer(self) -> LogBuffer | None:
         return self._buffer or get_log_buffer()
 
-    def _emit(self, category: LogCategory, message: str, level: str, fields: dict[str, Any]) -> None:
+    def _emit(
+        self, category: LogCategory, message: str, level: str, fields: dict[str, Any]
+    ) -> None:
         # Truncate long field values
         truncated: dict[str, Any] = {}
         for k, v in fields.items():

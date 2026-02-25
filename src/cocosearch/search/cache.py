@@ -224,7 +224,11 @@ class QueryCache:
 
                         sim = cosine_similarity(query_embedding, cached_embedding)
                         if sim >= self.semantic_threshold:
-                            _get_cs_log().cache("Cache hit (semantic)", similarity=f"{sim:.3f}", query=query[:100])
+                            _get_cs_log().cache(
+                                "Cache hit (semantic)",
+                                similarity=f"{sim:.3f}",
+                                query=query[:100],
+                            )
                             return entry.results, "semantic"
 
         return None, "miss"
@@ -317,7 +321,9 @@ class QueryCache:
             if index_name in self._embedding_index:
                 del self._embedding_index[index_name]
 
-        _get_cs_log().cache("Cache invalidated", index=index_name, entries_removed=removed)
+        _get_cs_log().cache(
+            "Cache invalidated", index=index_name, entries_removed=removed
+        )
         return removed
 
     def _evict_oldest(self) -> None:

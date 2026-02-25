@@ -291,8 +291,14 @@ def search(
     # Validate query input
     query = validate_query(query)
 
-    _get_cs_log().search("Query received", query=query[:200], index=index_name, limit=limit,
-                  language=language_filter, hybrid=use_hybrid)
+    _get_cs_log().search(
+        "Query received",
+        query=query[:200],
+        index=index_name,
+        limit=limit,
+        language=language_filter,
+        hybrid=use_hybrid,
+    )
 
     # Check cache first (exact match only at this point, semantic check after embedding)
     if not no_cache:
@@ -353,8 +359,11 @@ def search(
             should_use_hybrid = True
     # use_hybrid is False: always use vector-only (no action needed)
 
-    _get_cs_log().search("Mode selected", mode="hybrid" if should_use_hybrid else "vector",
-                  auto_detected=use_hybrid is None and should_use_hybrid)
+    _get_cs_log().search(
+        "Mode selected",
+        mode="hybrid" if should_use_hybrid else "vector",
+        auto_detected=use_hybrid is None and should_use_hybrid,
+    )
 
     # Execute hybrid search if applicable
     # Hybrid search now supports language and symbol filtering (applied before RRF fusion)
@@ -392,7 +401,9 @@ def search(
                     )
                 )
 
-        _get_cs_log().search("Search completed", mode="hybrid", results=len(results), query=query[:100])
+        _get_cs_log().search(
+            "Search completed", mode="hybrid", results=len(results), query=query[:100]
+        )
 
         # Cache results for future queries (hybrid search doesn't have embedding)
         if not no_cache:
@@ -499,7 +510,9 @@ def search(
                 result.symbol_signature = row[9] if row[9] else None
             results.append(result)
 
-    _get_cs_log().search("Search completed", mode="vector", results=len(results), query=query[:100])
+    _get_cs_log().search(
+        "Search completed", mode="vector", results=len(results), query=query[:100]
+    )
 
     # Cache results for future queries (vector search includes embedding for semantic matching)
     if not no_cache:

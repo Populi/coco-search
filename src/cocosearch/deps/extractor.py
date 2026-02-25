@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 def _get_cs_log():
     from cocosearch.logging import cs_log
+
     return cs_log
 
 
@@ -106,7 +107,9 @@ def extract_dependencies(index_name: str, codebase_path: str) -> dict:
         Stats dict with keys: ``files_processed``, ``files_skipped``,
         ``edges_found``, ``errors``.
     """
-    _get_cs_log().deps("Dependency extraction started", index=index_name, path=codebase_path)
+    _get_cs_log().deps(
+        "Dependency extraction started", index=index_name, path=codebase_path
+    )
 
     indexed_files = get_indexed_files(index_name)
 
@@ -159,8 +162,12 @@ def extract_dependencies(index_name: str, codebase_path: str) -> dict:
 
     insert_edges(index_name, all_edges)
 
-    _get_cs_log().deps("Dependency extraction completed",
-                        files_processed=files_processed, edges=edges_found, errors=errors)
+    _get_cs_log().deps(
+        "Dependency extraction completed",
+        files_processed=files_processed,
+        edges=edges_found,
+        errors=errors,
+    )
 
     return {
         "files_processed": files_processed,

@@ -15,6 +15,7 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 def _get_cs_log():
     from cocosearch.logging import cs_log
+
     return cs_log
 
 

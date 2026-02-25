@@ -150,7 +150,19 @@ class TestCsLogWithBuffer:
 
 
 class TestCsLogFallback:
-    def test_fallback_to_python_logging_when_no_buffer(self, caplog: pytest.LogCaptureFixture) -> None:
+    @pytest.fixture(autouse=True)
+    def _isolate_log_buffer(self):
+        """Ensure get_log_buffer() returns None so the fallback path is exercised."""
+        import cocosearch.mcp.log_stream as mod
+
+        old_buf = mod._log_buffer
+        mod._log_buffer = None
+        yield
+        mod._log_buffer = old_buf
+
+    def test_fallback_to_python_logging_when_no_buffer(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         log = CsLog(buffer=None)
 
         with caplog.at_level(logging.INFO, logger="cocosearch"):
