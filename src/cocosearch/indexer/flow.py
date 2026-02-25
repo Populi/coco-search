@@ -59,6 +59,9 @@ def _clean_stale_flow_state(index_name: str, db_url: str) -> None:
             cur.execute(f"DROP TABLE IF EXISTS {data_table}")
             cur.execute(f"DROP TABLE IF EXISTS cocosearch_parse_results_{index_name}")
             cur.execute(f"DROP TABLE IF EXISTS cocosearch_deps_{index_name}")
+            cur.execute(
+                f"DROP TABLE IF EXISTS codeindex_{index_name}__cocoindex_tracking"
+            )
         conn.commit()
     logger.info("Cleaned stale flow state for index '%s'", index_name)
 
@@ -180,17 +183,15 @@ def create_code_index_flow(
         )
 
     flow_name = f"CodeIndex_{index_name}"
-    try:
-        return cocoindex.open_flow(flow_name, code_index_flow)
-    except KeyError:
-        # Stale registration from a previous failed attempt in this process —
-        # close it (frees registry slot, does NOT touch persistent data) and retry
-        from cocoindex.flow import _flows
+    # Always close any existing in-memory registration before opening.
+    # This frees the registry slot (does NOT touch persistent data) and
+    # avoids stale state from previous runs or clear_index() in the same process.
+    from cocoindex.flow import _flows
 
-        old = _flows.get(flow_name)
-        if old is not None:
-            old.close()
-        return cocoindex.open_flow(flow_name, code_index_flow)
+    old = _flows.get(flow_name)
+    if old is not None:
+        old.close()
+    return cocoindex.open_flow(flow_name, code_index_flow)
 
 
 def run_index(
@@ -282,21 +283,21 @@ def run_index(
 
     # Drop and recreate if --fresh (cleans up both table and CocoIndex metadata)
     if fresh:
-        flow.drop()
-        # Also clean up non-CocoIndex tables (parse results) and path metadata
-        db_url = get_database_url()
         try:
-            with psycopg.connect(db_url) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DROP TABLE IF EXISTS cocosearch_parse_results_{index_name}"
-                    )
-                conn.commit()
+            flow.drop()
         except Exception as e:
-            logger.warning(
-                f"Failed to drop parse results table for '{index_name}': {e}"
-            )
-        logger.info(f"Dropped flow for index '{index_name}' (--fresh)")
+            logger.warning("flow.drop() failed (will clean up via SQL): %s", e)
+        db_url = get_database_url()
+        _clean_stale_flow_state(index_name, db_url)
+        flow = create_code_index_flow(
+            index_name=index_name,
+            codebase_path=codebase_path,
+            include_patterns=config.include_patterns,
+            exclude_patterns=exclude_patterns,
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+        )
+        logger.info("Dropped flow for index '%s' (--fresh)", index_name)
 
     # Setup flow, ensure schema, and run indexing.
     db_url = get_database_url()
@@ -309,7 +310,22 @@ def run_index(
     def _setup_and_update():
         """Setup flow, ensure schema columns, and run flow.update()."""
         flow.setup()
+        # Verify the data table actually exists after setup.
+        # CocoIndex may skip table creation if metadata says the schema is
+        # current, but the table could have been dropped externally (e.g.
+        # failed migration during embedding dimension change).  Raising here
+        # lets the stale-state recovery block clean metadata and retry.
         with psycopg.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = %s",
+                    (table_name,),
+                )
+                if not cur.fetchone():
+                    raise RuntimeError(
+                        f"Table {table_name} does not exist after flow.setup()"
+                    )
             symbol_result = ensure_symbol_columns(conn, table_name)
             ensure_parse_results_table(conn, index_name)
         if symbol_result.get("columns_added"):

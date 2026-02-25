@@ -4,7 +4,7 @@ Tests clear_index function using mock database pool.
 """
 
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from cocosearch.management.clear import clear_index
 
@@ -71,8 +71,69 @@ class TestClearIndex:
 
         # Find the DROP TABLE queries and verify table names are included
         drop_queries = [q for q, _ in cursor.calls if "DROP TABLE" in q]
-        assert len(drop_queries) == 2
+        assert len(drop_queries) == 4
         # Chunks table drop
         assert "codeindex_" in drop_queries[0] or "myproject" in drop_queries[0]
         # Parse results table drop
         assert "cocosearch_parse_results_myproject" in drop_queries[1]
+        # Dependencies table drop
+        assert "cocosearch_deps_myproject" in drop_queries[2]
+        # Tracking table drop
+        assert "codeindex_myproject__cocoindex_tracking" in drop_queries[3]
+
+    def test_cleans_cocoindex_metadata(self, mock_db_pool):
+        """Cleans CocoIndex setup metadata so re-index creates tables fresh."""
+        pool, cursor, conn = mock_db_pool(results=[(True,)])
+        with patch(
+            "cocosearch.management.clear.get_connection_pool", return_value=pool
+        ):
+            with patch(
+                "cocoindex.flow.get_flow_full_name",
+                return_value="full::CodeIndex_myproject",
+            ) as mock_get_name:
+                clear_index("myproject")
+                mock_get_name.assert_called_once_with("CodeIndex_myproject")
+
+        # Verify DELETE query was issued for metadata
+        delete_queries = [
+            (q, args)
+            for q, args in cursor.calls
+            if "DELETE FROM cocoindex_setup_metadata" in q
+        ]
+        assert len(delete_queries) == 1
+        assert delete_queries[0][1] == ("full::CodeIndex_myproject",)
+
+    def test_closes_in_memory_flow(self, mock_db_pool):
+        """Closes the in-memory CocoIndex flow to prevent stale state on re-index."""
+        pool, cursor, conn = mock_db_pool(results=[(True,)])
+        mock_flow = MagicMock()
+        mock_flows = {"CodeIndex_myproject": mock_flow}
+
+        with patch(
+            "cocosearch.management.clear.get_connection_pool", return_value=pool
+        ):
+            with patch(
+                "cocoindex.flow.get_flow_full_name",
+                return_value="full::CodeIndex_myproject",
+            ):
+                with patch("cocoindex.flow._flows", mock_flows):
+                    clear_index("myproject")
+
+        mock_flow.close.assert_called_once()
+
+    def test_skips_flow_close_when_not_registered(self, mock_db_pool):
+        """Does not error when no in-memory flow is registered."""
+        pool, cursor, conn = mock_db_pool(results=[(True,)])
+        mock_flows = {}  # No flow registered
+
+        with patch(
+            "cocosearch.management.clear.get_connection_pool", return_value=pool
+        ):
+            with patch(
+                "cocoindex.flow.get_flow_full_name",
+                return_value="full::CodeIndex_myproject",
+            ):
+                with patch("cocoindex.flow._flows", mock_flows):
+                    result = clear_index("myproject")
+
+        assert result["success"] is True
