@@ -2,6 +2,7 @@ import { state } from './state.js';
 
 const LOG_MAX_LINES = 1000;
 const LOG_MAX_RETRIES = 5;
+const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL', 'STDERR'];
 
 function _connectLogStream() {
     if (state.logEventSource) {
@@ -41,12 +42,28 @@ export function startLogStream() {
     _connectLogStream();
 }
 
+function _passesFilter(div) {
+    const cat = div.dataset.cat;
+    const level = div.dataset.level;
+    if (state.logCategoryFilters && state.logCategoryFilters[cat] === false) {
+        return false;
+    }
+    const minIdx = LOG_LEVELS.indexOf(state.logMinLevel || 'DEBUG');
+    const entryIdx = LOG_LEVELS.indexOf(level);
+    if (entryIdx >= 0 && entryIdx < minIdx) {
+        return false;
+    }
+    return true;
+}
+
 export function appendLogLine(entry) {
     const body = document.getElementById('logPanelBody');
     const div = document.createElement('div');
     div.className = 'log-line';
+    div.dataset.cat = entry.cat || 'system';
+    div.dataset.level = entry.level || 'INFO';
 
-    // Format timestamp as HH:MM:SS
+    // Timestamp HH:MM:SS
     const d = new Date(entry.ts * 1000);
     const ts = d.toTimeString().slice(0, 8);
 
@@ -54,16 +71,40 @@ export function appendLogLine(entry) {
     tsSpan.className = 'log-ts';
     tsSpan.textContent = ts + ' ';
 
+    // Category badge
+    const catSpan = document.createElement('span');
+    catSpan.className = 'log-cat log-cat-' + (entry.cat || 'system');
+    catSpan.textContent = '[' + (entry.cat || 'system') + ']';
+
+    // Level
     const lvlSpan = document.createElement('span');
     lvlSpan.className = 'log-level-' + (entry.level || 'INFO');
-    lvlSpan.textContent = (entry.level || 'INFO').padEnd(8);
+    lvlSpan.textContent = ' ' + (entry.level || 'INFO').padEnd(8);
 
+    // Message
     const msgSpan = document.createElement('span');
-    msgSpan.textContent = entry.msg || '';
+    msgSpan.textContent = ' ' + (entry.msg || '');
 
     div.appendChild(tsSpan);
+    div.appendChild(catSpan);
     div.appendChild(lvlSpan);
     div.appendChild(msgSpan);
+
+    // Fields
+    if (entry.fields && Object.keys(entry.fields).length > 0) {
+        const fieldsSpan = document.createElement('span');
+        fieldsSpan.className = 'log-fields';
+        fieldsSpan.textContent = '  ' + Object.entries(entry.fields)
+            .map(([k, v]) => k + '=' + v)
+            .join(' ');
+        div.appendChild(fieldsSpan);
+    }
+
+    // Apply current filters
+    if (!_passesFilter(div)) {
+        div.style.display = 'none';
+    }
+
     body.appendChild(div);
 
     // Enforce max lines
@@ -73,10 +114,8 @@ export function appendLogLine(entry) {
         state.logLineCount = body.children.length;
     }
 
-    // Update line count
     document.getElementById('logLineCount').textContent = state.logLineCount + ' lines';
 
-    // Auto-scroll or show badge
     if (state.logAutoScroll) {
         body.scrollTop = body.scrollHeight;
     } else {
@@ -84,11 +123,17 @@ export function appendLogLine(entry) {
         indicator.classList.add('visible');
     }
 
-    // Unread badge if panel closed
     const panel = document.getElementById('logPanel');
     if (!panel.classList.contains('open')) {
         state.logUnreadCount++;
         document.getElementById('logBadge').classList.add('active');
+    }
+}
+
+export function applyLogFilters() {
+    const body = document.getElementById('logPanelBody');
+    for (const div of body.children) {
+        div.style.display = _passesFilter(div) ? '' : 'none';
     }
 }
 
@@ -99,7 +144,6 @@ export function toggleLogPanel() {
         state.logUnreadCount = 0;
         document.getElementById('logBadge').classList.remove('active');
         if (!state.logEventSource) startLogStream();
-        // Scroll to bottom on open
         const body = document.getElementById('logPanelBody');
         body.scrollTop = body.scrollHeight;
         state.logAutoScroll = true;
