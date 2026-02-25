@@ -4,7 +4,7 @@ This is the "explain it simply" version of the [Architecture Overview](architect
 
 ## The Big Picture
 
-CocoSearch does two things: **indexing** (reading your code and preparing it for search) and **searching** (finding the right code when you ask a question). Everything runs on your machine — no cloud, no external APIs, no data leaving your laptop.
+CocoSearch does two things: **indexing** (reading your code and preparing it for search) and **searching** (finding the right code when you ask a question). Everything runs on your machine by default — no cloud, no data leaving your laptop. Optional remote embedding providers (OpenAI, OpenRouter) are available if you prefer managed infrastructure; even then, only chunk text is sent for embedding while all storage and search remain local.
 
 Think of it like building a personal library catalog. First you organize all the books (indexing), then you use the catalog to find what you need (searching).
 
@@ -26,7 +26,7 @@ The overlap exists so that context isn't lost at boundaries. If a function strad
 
 ### 3. Turn chunks into numbers
 
-This is where the magic happens. Each chunk gets fed to an embedding model ([nomic-embed-text](https://ollama.com/library/nomic-embed-text), running locally via Ollama) that converts the text into a list of 768 numbers — a **vector**.
+This is where the magic happens. Each chunk gets fed to an embedding model (by default [nomic-embed-text](https://ollama.com/library/nomic-embed-text), running locally via Ollama — or optionally a remote provider like OpenAI or OpenRouter) that converts the text into a list of 768 numbers — a **vector**.
 
 Before embedding, CocoSearch prepends the file path to the chunk text (e.g., `"File: .github/workflows/release.yaml\n<chunk text>"`). This gives the model context about *where* the code lives, so searching "release flow" can surface `release.yaml` even if the chunk text itself doesn't say "release". The filename prefix is only used for generating the embedding — the stored text stays clean.
 
@@ -126,13 +126,15 @@ Hybrid search with RRF fusion gives you the best of both worlds. Semantic unders
 
 ## The Local-First Part
 
-Everything described above runs on your machine:
+By default, everything described above runs on your machine:
 
 - **Ollama** runs the embedding model locally — no API keys, no network calls
 - **PostgreSQL + pgvector** stores and searches vectors locally — your code never touches a remote database
 - **CocoSearch** orchestrates it all as a Python CLI — no daemon, no cloud service
 
 The only external dependencies are Docker (to run Postgres and Ollama) and the embedding model weights (downloaded once by Ollama). After that, you could run CocoSearch on an airplane.
+
+**Optional remote embeddings:** If you prefer managed infrastructure or don't want to run Ollama locally, CocoSearch supports OpenAI and OpenRouter as embedding providers. When using a remote provider, only chunk text is sent for embedding — all indexing logic, storage, and search remain fully local. Configure via `embedding.provider` in `cocosearch.yaml` or the `COCOSEARCH_EMBEDDING_PROVIDER` environment variable.
 
 ## Beyond Search: Dependency Graph
 
