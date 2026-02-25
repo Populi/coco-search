@@ -71,6 +71,11 @@ from cocosearch.search.analyze import analyze as run_analyze  # noqa: E402
 from cocosearch.search.context_expander import ContextExpander  # noqa: E402
 
 
+def _get_cs_log():
+    from cocosearch.logging import cs_log
+    return cs_log
+
+
 def _ensure_cocoindex_init() -> None:
     """Initialize CocoIndex exactly once, thread-safely.
 
@@ -2364,6 +2369,8 @@ def run_server(
 
     setup_log_capture(log_file=log_file_enabled)
 
+    _get_cs_log().system("Server starting", transport=transport, host=host, port=port)
+
     # Dashboard auto-open (opt-out via COCOSEARCH_NO_DASHBOARD=1)
     no_dashboard = os.environ.get("COCOSEARCH_NO_DASHBOARD", "").strip() == "1"
 
@@ -2371,7 +2378,9 @@ def run_server(
     # "sync API called inside existing event loop" RuntimeWarning
     try:
         _ensure_cocoindex_init()
+        _get_cs_log().infra("CocoIndex initialized")
     except Exception as e:
+        _get_cs_log().infra("CocoIndex pre-init failed", level="WARNING", error=str(e))
         logger.warning(f"CocoIndex pre-init failed (will retry on demand): {e}")
 
     if transport == "stdio":
@@ -2386,6 +2395,7 @@ def run_server(
             if dashboard_url:
                 _open_browser(dashboard_url)
 
+        _get_cs_log().system("Server listening", transport="stdio")
         mcp.run(transport="stdio")
     elif transport == "sse":
         # Suppress verbose per-request access logs from uvicorn
@@ -2400,6 +2410,7 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
+        _get_cs_log().system("Server listening", transport="sse", url=f"http://{host}:{port}")
         mcp.run(transport="sse")
     elif transport == "http":
         # Suppress verbose per-request access logs from uvicorn
@@ -2414,6 +2425,7 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
+        _get_cs_log().system("Server listening", transport="http", url=f"http://{host}:{port}")
         mcp.run(transport="streamable-http")
     else:
         # Should not reach here if CLI validates

@@ -684,85 +684,93 @@ class TestRunServer:
     def test_stdio_transport_calls_mcp_run_stdio(self, monkeypatch):
         """stdio transport calls mcp.run with transport='stdio'."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log") as _mock_log:
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="stdio")
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                run_server(transport="stdio")
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
     def test_sse_transport_configures_settings_and_calls_mcp_run(self, monkeypatch):
         """sse transport sets mcp.settings and calls mcp.run."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            # Create mock settings object
-            mock_settings = MagicMock()
-            mock_mcp.settings = mock_settings
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                # Create mock settings object
+                mock_settings = MagicMock()
+                mock_mcp.settings = mock_settings
 
-            from cocosearch.mcp.server import run_server
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="sse", host="127.0.0.1", port=8080)
+                run_server(transport="sse", host="127.0.0.1", port=8080)
 
-            # Verify settings were configured
-            assert mock_settings.host == "127.0.0.1"
-            assert mock_settings.port == 8080
-            # Verify mcp.run called with sse transport
-            mock_mcp.run.assert_called_once_with(transport="sse")
+                # Verify settings were configured
+                assert mock_settings.host == "127.0.0.1"
+                assert mock_settings.port == 8080
+                # Verify mcp.run called with sse transport
+                mock_mcp.run.assert_called_once_with(transport="sse")
 
     def test_http_transport_configures_settings_and_calls_streamable_http(
         self, monkeypatch
     ):
         """http transport sets mcp.settings and calls mcp.run with 'streamable-http'."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            # Create mock settings object
-            mock_settings = MagicMock()
-            mock_mcp.settings = mock_settings
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                # Create mock settings object
+                mock_settings = MagicMock()
+                mock_mcp.settings = mock_settings
 
-            from cocosearch.mcp.server import run_server
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="http", host="0.0.0.0", port=3000)
+                run_server(transport="http", host="0.0.0.0", port=3000)
 
-            # Verify settings were configured
-            assert mock_settings.host == "0.0.0.0"
-            assert mock_settings.port == 3000
-            # Verify mcp.run called with streamable-http transport
-            mock_mcp.run.assert_called_once_with(transport="streamable-http")
+                # Verify settings were configured
+                assert mock_settings.host == "0.0.0.0"
+                assert mock_settings.port == 3000
+                # Verify mcp.run called with streamable-http transport
+                mock_mcp.run.assert_called_once_with(transport="streamable-http")
 
     def test_invalid_transport_raises_valueerror(self, monkeypatch):
         """Invalid transport raises ValueError."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp"):
-            from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp"):
+                from cocosearch.mcp.server import run_server
 
-            with pytest.raises(ValueError, match="Invalid transport"):
-                run_server(transport="invalid")
+                with pytest.raises(ValueError, match="Invalid transport"):
+                    run_server(transport="invalid")
 
     def test_stdio_starts_dashboard_server(self, monkeypatch):
         """stdio transport starts background dashboard server and opens browser."""
         monkeypatch.delenv("COCOSEARCH_NO_DASHBOARD", raising=False)
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            with patch(
-                "cocosearch.dashboard.server.start_dashboard_server",
-                return_value="http://127.0.0.1:8080/dashboard",
-            ) as mock_start:
-                with patch("cocosearch.mcp.server._open_browser") as mock_open:
-                    from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                with patch(
+                    "cocosearch.dashboard.server.start_dashboard_server",
+                    return_value="http://127.0.0.1:8080/dashboard",
+                ) as mock_start:
+                    with patch("cocosearch.mcp.server._open_browser") as mock_open:
+                        from cocosearch.mcp.server import run_server
 
-                    run_server(transport="stdio")
-                    mock_start.assert_called_once()
-                    mock_open.assert_called_once_with("http://127.0.0.1:8080/dashboard")
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                        run_server(transport="stdio")
+                        mock_start.assert_called_once()
+                        mock_open.assert_called_once_with(
+                            "http://127.0.0.1:8080/dashboard"
+                        )
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
     def test_no_dashboard_env_skips_dashboard(self, monkeypatch):
         """COCOSEARCH_NO_DASHBOARD=1 skips dashboard and browser."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            with patch("cocosearch.mcp.server._open_browser") as mock_open:
-                from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                with patch("cocosearch.mcp.server._open_browser") as mock_open:
+                    from cocosearch.mcp.server import run_server
 
-                run_server(transport="stdio")
-                mock_open.assert_not_called()
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                    run_server(transport="stdio")
+                    mock_open.assert_not_called()
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
 
 class TestRegisterWithGit:
