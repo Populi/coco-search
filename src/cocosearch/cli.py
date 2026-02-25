@@ -219,13 +219,8 @@ def index_command(args: argparse.Namespace) -> int:
             branch_info += f" ({commit_hash})"
         console.print(f"[dim]Branch: {branch_info}[/dim]")
 
-    # Resolve embedding provider/model for metadata tracking
-    from cocosearch.config.schema import default_model_for_provider
-
-    _embed_provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
-    _embed_model = os.environ.get(
-        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(_embed_provider)
-    )
+    # Resolve embedding provider/model through config precedence and bridge to env vars
+    _embed_provider, _embed_model = resolver.bridge_embedding_config()
 
     # Set status to 'indexing' before starting (best-effort)
     try:
@@ -1612,13 +1607,35 @@ def config_check_command(args: argparse.Namespace) -> int:
     # Show success + current values
     console.print("[green]Environment configuration is valid[/green]\n")
 
-    # Resolve embedding provider
-    from cocosearch.config.schema import default_model_for_provider
+    # Load config for resolver-based source tracking
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+    check_resolver = ConfigResolver(project_config, config_path)
 
-    provider = os.getenv("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
-    provider_source = (
-        "environment" if os.getenv("COCOSEARCH_EMBEDDING_PROVIDER") else "default"
+    def _source_label(source: str) -> str:
+        """Map resolver source to display label."""
+        if source.startswith("env:"):
+            return "environment"
+        if source.startswith("config:") or source == "config":
+            return "config file"
+        return source  # "default", "CLI flag"
+
+    # Resolve embedding provider/model through config precedence
+    provider, provider_source = check_resolver.resolve(
+        "embedding.provider", None, "COCOSEARCH_EMBEDDING_PROVIDER"
     )
+    provider_source = _source_label(provider_source)
+
+    model, model_source = check_resolver.resolve(
+        "embedding.model", None, "COCOSEARCH_EMBEDDING_MODEL"
+    )
+    model_source = _source_label(model_source)
 
     # Display current environment variables
     table = Table(title="Environment Variables")
@@ -1634,13 +1651,8 @@ def config_check_command(args: argparse.Namespace) -> int:
     # EMBEDDING_PROVIDER
     table.add_row("COCOSEARCH_EMBEDDING_PROVIDER", provider, provider_source)
 
-    # EMBEDDING_MODEL (default depends on provider)
-    default_model = default_model_for_provider(provider)
-    embedding_model = os.getenv("COCOSEARCH_EMBEDDING_MODEL", default_model)
-    embedding_model_source = (
-        "environment" if os.getenv("COCOSEARCH_EMBEDDING_MODEL") else "default"
-    )
-    table.add_row("COCOSEARCH_EMBEDDING_MODEL", embedding_model, embedding_model_source)
+    # EMBEDDING_MODEL
+    table.add_row("COCOSEARCH_EMBEDDING_MODEL", model, model_source)
 
     if provider == "ollama":
         # OLLAMA_URL (optional with default)
@@ -1691,22 +1703,22 @@ def config_check_command(args: argparse.Namespace) -> int:
         # Embedding model
         if ollama_reachable:
             try:
-                check_ollama_model(ollama_url, embedding_model)
+                check_ollama_model(ollama_url, model)
                 conn_table.add_row(
-                    f"Model ({embedding_model})",
+                    f"Model ({model})",
                     "[green]✓ available[/green]",
                     "",
                 )
             except ConnectionError:
                 has_failure = True
                 conn_table.add_row(
-                    f"Model ({embedding_model})",
+                    f"Model ({model})",
                     "[red]✗ not found[/red]",
-                    f"Run: ollama pull {embedding_model}",
+                    f"Run: ollama pull {model}",
                 )
         else:
             conn_table.add_row(
-                f"Model ({embedding_model})",
+                f"Model ({model})",
                 "[dim]- skipped[/dim]",
                 "Ollama is unreachable",
             )

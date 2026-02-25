@@ -1,7 +1,9 @@
 """Unit tests for config resolver precedence logic."""
 
+import os
 from pathlib import Path
 
+import pytest
 
 from cocosearch.config import CocoSearchConfig
 from cocosearch.config.resolver import (
@@ -286,3 +288,92 @@ class TestConfigResolver:
 
         # Should have at least these 8 fields
         assert len(paths) >= 8
+
+
+class TestBridgeEmbeddingConfig:
+    """Test ConfigResolver.bridge_embedding_config env var bridging."""
+
+    _ENV_KEYS = (
+        "COCOSEARCH_EMBEDDING_PROVIDER",
+        "COCOSEARCH_EMBEDDING_MODEL",
+        "COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION",
+    )
+
+    @pytest.fixture(autouse=True)
+    def _clean_bridge_env(self):
+        """Save and restore embedding env vars to prevent leakage."""
+        saved = {k: os.environ.pop(k) for k in self._ENV_KEYS if k in os.environ}
+        yield
+        for k in self._ENV_KEYS:
+            os.environ.pop(k, None)
+        os.environ.update(saved)
+
+    def test_bridge_sets_env_from_config(self):
+        """Config values are bridged to env vars when env is not set."""
+        config = CocoSearchConfig()
+        config.embedding.provider = "openai"
+        config.embedding.model = "text-embedding-3-small"
+        resolver = ConfigResolver(config, config_path=Path("/config.yaml"))
+
+        provider, model = resolver.bridge_embedding_config()
+
+        assert provider == "openai"
+        assert model == "text-embedding-3-small"
+        assert os.environ["COCOSEARCH_EMBEDDING_PROVIDER"] == "openai"
+        assert os.environ["COCOSEARCH_EMBEDDING_MODEL"] == "text-embedding-3-small"
+
+    def test_bridge_env_takes_precedence(self):
+        """Env vars are preserved over config values."""
+        os.environ["COCOSEARCH_EMBEDDING_PROVIDER"] = "openrouter"
+        os.environ["COCOSEARCH_EMBEDDING_MODEL"] = "custom-model"
+
+        config = CocoSearchConfig()  # defaults: ollama, nomic-embed-text
+        resolver = ConfigResolver(config)
+
+        provider, model = resolver.bridge_embedding_config()
+
+        assert provider == "openrouter"
+        assert model == "custom-model"
+        assert os.environ["COCOSEARCH_EMBEDDING_PROVIDER"] == "openrouter"
+        assert os.environ["COCOSEARCH_EMBEDDING_MODEL"] == "custom-model"
+
+    def test_bridge_returns_resolved_values(self):
+        """Return tuple matches the resolved values."""
+        config = CocoSearchConfig()
+        resolver = ConfigResolver(config)
+
+        provider, model = resolver.bridge_embedding_config()
+
+        assert provider == "ollama"
+        assert model == "nomic-embed-text"
+
+    def test_bridge_default_when_no_config_or_env(self):
+        """Falls back to defaults when no config or env is set."""
+        config = CocoSearchConfig()
+        resolver = ConfigResolver(config)
+
+        provider, model = resolver.bridge_embedding_config()
+
+        assert provider == "ollama"
+        assert model == "nomic-embed-text"
+        assert os.environ["COCOSEARCH_EMBEDDING_PROVIDER"] == "ollama"
+        assert os.environ["COCOSEARCH_EMBEDDING_MODEL"] == "nomic-embed-text"
+
+    def test_bridge_output_dimension(self):
+        """outputDimension is bridged to env var when set in config."""
+        config = CocoSearchConfig()
+        config.embedding.outputDimension = 512
+        resolver = ConfigResolver(config, config_path=Path("/config.yaml"))
+
+        resolver.bridge_embedding_config()
+
+        assert os.environ["COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION"] == "512"
+
+    def test_bridge_output_dimension_not_set_when_none(self):
+        """outputDimension env var is not set when value is None."""
+        config = CocoSearchConfig()  # outputDimension defaults to None
+        resolver = ConfigResolver(config)
+
+        resolver.bridge_embedding_config()
+
+        assert "COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION" not in os.environ
