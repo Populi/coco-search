@@ -458,6 +458,84 @@ class TestIndexStats:
         assert result["status"] == "indexed"
 
 
+class TestInjectConfiguredEmbedding:
+    """Tests for _inject_configured_embedding helper."""
+
+    def test_defaults_to_ollama(self, monkeypatch):
+        """Without env vars, returns ollama + nomic-embed-text."""
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_PROVIDER", raising=False)
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "ollama"
+        assert result["configured_embedding_model"] == "nomic-embed-text"
+
+    def test_respects_provider_env(self, monkeypatch):
+        """COCOSEARCH_EMBEDDING_PROVIDER sets provider and default model."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "openai"
+        assert result["configured_embedding_model"] == "text-embedding-3-small"
+
+    def test_respects_model_env(self, monkeypatch):
+        """COCOSEARCH_EMBEDDING_MODEL overrides provider default."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_MODEL", "text-embedding-3-large")
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "openai"
+        assert result["configured_embedding_model"] == "text-embedding-3-large"
+
+    def test_build_single_stats_includes_configured_fields(self, monkeypatch):
+        """build_single_stats result contains configured_embedding_* keys."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openrouter")
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        mock_stats = IndexStats(
+            name="testindex",
+            file_count=10,
+            chunk_count=50,
+            storage_size=1024,
+            storage_size_pretty="1.0 KB",
+            created_at=None,
+            updated_at=None,
+            is_stale=False,
+            staleness_days=-1,
+            languages=[],
+            symbols={},
+            warnings=[],
+            parse_stats={},
+            source_path=None,
+            status="indexed",
+            indexing_elapsed_seconds=None,
+            repo_url=None,
+        )
+
+        with patch("cocoindex.init"):
+            with patch(
+                "cocosearch.mcp.server.get_comprehensive_stats",
+                return_value=mock_stats,
+            ):
+                result = index_stats(index_name="testindex")
+
+        assert result["configured_embedding_provider"] == "openrouter"
+        assert result["configured_embedding_model"] == "openai/text-embedding-3-small"
+
+
 class TestClearIndex:
     """Tests for clear_index MCP tool."""
 

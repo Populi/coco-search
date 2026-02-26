@@ -184,6 +184,18 @@ def _register_with_git(index_name: str, project_path: str) -> None:
     )
 
 
+def _inject_configured_embedding(result: dict) -> None:
+    """Add currently configured embedding provider/model to stats dict."""
+    from cocosearch.config.schema import default_model_for_provider
+
+    provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(provider)
+    )
+    result["configured_embedding_provider"] = provider
+    result["configured_embedding_model"] = model
+
+
 def build_all_stats(include_failures: bool = False) -> list[dict]:
     """Build stats for all indexes.
 
@@ -204,6 +216,7 @@ def build_all_stats(include_failures: bool = False) -> list[dict]:
             stats = get_comprehensive_stats(idx["name"])
             result = stats.to_dict()
             _apply_thread_liveness_status(idx["name"], result, stats.status)
+            _inject_configured_embedding(result)
             if include_failures:
                 result["parse_failures"] = get_parse_failures(idx["name"])
                 result["grammar_failures"] = get_grammar_failures(idx["name"])
@@ -228,6 +241,7 @@ def build_single_stats(index_name: str, include_failures: bool = False) -> dict:
     stats = get_comprehensive_stats(index_name)
     result = stats.to_dict()
     _apply_thread_liveness_status(index_name, result, stats.status)
+    _inject_configured_embedding(result)
     if include_failures:
         result["parse_failures"] = get_parse_failures(index_name)
         result["grammar_failures"] = get_grammar_failures(index_name)

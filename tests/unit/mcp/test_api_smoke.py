@@ -57,7 +57,11 @@ class TestApiInfraSmoke:
             "cocosearch.mcp.server._check_infra_sync",
             return_value={
                 "database": {"ok": True},
-                "embedding": {"ok": True, "provider": "ollama", "model": "nomic-embed-text"},
+                "embedding": {
+                    "ok": True,
+                    "provider": "ollama",
+                    "model": "nomic-embed-text",
+                },
                 "all_ok": True,
             },
         ):
@@ -76,7 +80,11 @@ class TestApiInfraSmoke:
             "cocosearch.mcp.server._check_infra_sync",
             return_value={
                 "database": {"ok": False, "error": "PostgreSQL is not reachable"},
-                "embedding": {"ok": True, "provider": "ollama", "model": "nomic-embed-text"},
+                "embedding": {
+                    "ok": True,
+                    "provider": "ollama",
+                    "model": "nomic-embed-text",
+                },
                 "all_ok": False,
             },
         ):

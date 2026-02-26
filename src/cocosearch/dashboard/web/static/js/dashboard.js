@@ -67,9 +67,18 @@ export function updateSummaryCards(stats) {
     // Embedding info in status line
     const embeddingEl = document.getElementById('embeddingInfo');
     if (stats.embedding_provider) {
-        const provider = escapeHtml(stats.embedding_provider);
-        const model = escapeHtml(stats.embedding_model || 'default');
-        embeddingEl.innerHTML = 'PROVIDER: <span class="status-ok">' + provider.toUpperCase() + '</span> MODEL: <span class="status-ok">' + model + '</span>';
+        const stored = escapeHtml(stats.embedding_provider).toUpperCase();
+        const storedModel = escapeHtml(stats.embedding_model || 'default');
+        const configured = escapeHtml(stats.configured_embedding_provider || 'ollama').toUpperCase();
+        const configuredModel = escapeHtml(stats.configured_embedding_model || 'default');
+
+        if (stored === configured) {
+            embeddingEl.innerHTML = 'PROVIDER: <span class="status-ok">' + stored + '</span> MODEL: <span class="status-ok">' + storedModel + '</span>';
+        } else {
+            embeddingEl.innerHTML =
+                'INDEX: <span class="status-partial">' + stored + '</span> (' + storedModel + ') · ' +
+                'CONFIG: <span class="status-ok">' + configured + '</span> (' + configuredModel + ')';
+        }
         embeddingEl.style.display = '';
     } else {
         embeddingEl.style.display = 'none';
