@@ -77,6 +77,7 @@ class TestConfigCheckConnectivity:
         assert result == 1
         output = capsys.readouterr().out
         assert "skipped" in output
+        assert "--profile" in output
 
     def test_model_missing_returns_one(self, capsys):
         """Exit 1 with 'ollama pull' hint when model is not found."""
@@ -157,6 +158,76 @@ class TestConfigCheckConnectivity:
         output = capsys.readouterr().out
         assert "Environment Variables" in output
         assert "Connectivity" in output
+
+
+class TestConfigCheckProvider:
+    """Tests for provider-aware config check behavior."""
+
+    def test_ollama_provider_shows_ollama_checks(self, capsys):
+        """Ollama provider shows Ollama connectivity checks."""
+        mock_conn = MagicMock()
+        with patch(
+            "cocosearch.indexer.preflight.psycopg.connect", return_value=mock_conn
+        ):
+            with patch(
+                "cocosearch.indexer.preflight.urllib.request.urlopen",
+                return_value=_mock_tags_response(),
+            ):
+                result = config_check_command(_make_args())
+
+        assert result == 0
+        output = capsys.readouterr().out
+        assert "Ollama" in output
+        assert "COCOSEARCH_EMBEDDING_PROVIDER" in output
+
+    def test_openai_provider_skips_ollama_checks(self, capsys, monkeypatch):
+        """OpenAI provider skips Ollama checks and checks API key instead."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_API_KEY", "sk-test")
+
+        mock_conn = MagicMock()
+        with patch(
+            "cocosearch.indexer.preflight.psycopg.connect", return_value=mock_conn
+        ):
+            result = config_check_command(_make_args())
+
+        assert result == 0
+        output = capsys.readouterr().out
+        assert "API Key" in output
+        assert "✓ set" in output
+        # Ollama URL should not appear in env vars table
+        assert "COCOSEARCH_OLLAMA_URL" not in output
+
+    def test_openai_provider_missing_key_fails(self, capsys, monkeypatch):
+        """OpenAI provider without API key shows failure."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_API_KEY", raising=False)
+
+        mock_conn = MagicMock()
+        with patch(
+            "cocosearch.indexer.preflight.psycopg.connect", return_value=mock_conn
+        ):
+            result = config_check_command(_make_args())
+
+        assert result == 1
+        output = capsys.readouterr().out
+        assert "✗ missing" in output
+        assert "COCOSEARCH_EMBEDDING_API_KEY" in output
+
+    def test_provider_displayed_in_env_table(self, capsys, monkeypatch):
+        """Provider is displayed in the environment variables table."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openrouter")
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_API_KEY", "sk-test")
+
+        mock_conn = MagicMock()
+        with patch(
+            "cocosearch.indexer.preflight.psycopg.connect", return_value=mock_conn
+        ):
+            config_check_command(_make_args())
+
+        output = capsys.readouterr().out
+        assert "openrouter" in output
+        assert "COCOSEARCH_EMBEDDING_PROVIDER" in output
 
 
 class TestConfigSubcommandHelp:

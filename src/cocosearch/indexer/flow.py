@@ -37,6 +37,12 @@ from cocosearch.validation import validate_index_name
 logger = logging.getLogger(__name__)
 
 
+def _get_cs_log():
+    from cocosearch.logging import cs_log
+
+    return cs_log
+
+
 def _clean_stale_flow_state(index_name: str, db_url: str) -> None:
     """Remove stale CocoIndex metadata and data tables for a flow.
 
@@ -44,21 +50,21 @@ def _clean_stale_flow_state(index_name: str, db_url: str) -> None:
     in the cocoindex_setup_metadata table.  Cleans up directly via SQL so
     a fresh flow can be created from scratch.
     """
-    from cocoindex.flow import get_flow_full_name
-
     flow_name = f"CodeIndex_{index_name}"
-    full_name = get_flow_full_name(flow_name)
     data_table = f"codeindex_{index_name}__{index_name}_chunks"
 
     with psycopg.connect(db_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM cocoindex_setup_metadata WHERE flow_name = %s",
-                (full_name,),
+                (flow_name,),
             )
             cur.execute(f"DROP TABLE IF EXISTS {data_table}")
             cur.execute(f"DROP TABLE IF EXISTS cocosearch_parse_results_{index_name}")
             cur.execute(f"DROP TABLE IF EXISTS cocosearch_deps_{index_name}")
+            cur.execute(
+                f"DROP TABLE IF EXISTS codeindex_{index_name}__cocoindex_tracking"
+            )
         conn.commit()
     logger.info("Cleaned stale flow state for index '%s'", index_name)
 
@@ -180,17 +186,15 @@ def create_code_index_flow(
         )
 
     flow_name = f"CodeIndex_{index_name}"
-    try:
-        return cocoindex.open_flow(flow_name, code_index_flow)
-    except KeyError:
-        # Stale registration from a previous failed attempt in this process —
-        # close it (frees registry slot, does NOT touch persistent data) and retry
-        from cocoindex.flow import _flows
+    # Always close any existing in-memory registration before opening.
+    # This frees the registry slot (does NOT touch persistent data) and
+    # avoids stale state from previous runs or clear_index() in the same process.
+    from cocoindex.flow import _flows
 
-        old = _flows.get(flow_name)
-        if old is not None:
-            old.close()
-        return cocoindex.open_flow(flow_name, code_index_flow)
+    old = _flows.get(flow_name)
+    if old is not None:
+        old.close()
+    return cocoindex.open_flow(flow_name, code_index_flow)
 
 
 def run_index(
@@ -218,6 +222,10 @@ def run_index(
     Returns:
         IndexUpdateInfo with statistics about the indexing run.
     """
+    _get_cs_log().index(
+        "Indexing started", index=index_name, path=codebase_path, fresh=fresh
+    )
+
     # Validate index name before any database operations
     validate_index_name(index_name)
 
@@ -225,14 +233,44 @@ def run_index(
     if config is None:
         config = IndexingConfig()
 
+    # Resolve embedding provider and model for preflight + metadata
+    from cocosearch.config.schema import default_model_for_provider
+
+    embedding_provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    embedding_model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(embedding_provider)
+    )
+
     # Preflight: verify infrastructure is reachable before any CocoIndex work
     check_infrastructure(
         db_url=get_database_url(),
         ollama_url=os.environ.get("COCOSEARCH_OLLAMA_URL"),
-        embedding_model=os.environ.get(
-            "COCOSEARCH_EMBEDDING_MODEL", "nomic-embed-text"
-        ),
+        embedding_model=embedding_model,
+        provider=embedding_provider,
     )
+
+    _get_cs_log().infra(
+        "Preflight checks passed", provider=embedding_provider, model=embedding_model
+    )
+
+    # Mismatch detection: warn if index was built with different provider/model
+    from cocosearch.management.metadata import get_index_metadata
+
+    existing = get_index_metadata(index_name)
+    if existing and existing.get("embedding_model"):
+        if (
+            existing["embedding_model"] != embedding_model
+            or existing.get("embedding_provider") != embedding_provider
+        ):
+            logger.warning(
+                "Index '%s' was built with %s/%s but current config uses %s/%s. "
+                "Use --fresh to reindex with the new model.",
+                index_name,
+                existing.get("embedding_provider", "unknown"),
+                existing["embedding_model"],
+                embedding_provider,
+                embedding_model,
+            )
 
     # Initialize CocoIndex (database configured via COCOSEARCH_DATABASE_URL)
     cocoindex.init()
@@ -256,21 +294,21 @@ def run_index(
 
     # Drop and recreate if --fresh (cleans up both table and CocoIndex metadata)
     if fresh:
-        flow.drop()
-        # Also clean up non-CocoIndex tables (parse results) and path metadata
-        db_url = get_database_url()
         try:
-            with psycopg.connect(db_url) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        f"DROP TABLE IF EXISTS cocosearch_parse_results_{index_name}"
-                    )
-                conn.commit()
+            flow.drop()
         except Exception as e:
-            logger.warning(
-                f"Failed to drop parse results table for '{index_name}': {e}"
-            )
-        logger.info(f"Dropped flow for index '{index_name}' (--fresh)")
+            logger.warning("flow.drop() failed (will clean up via SQL): %s", e)
+        db_url = get_database_url()
+        _clean_stale_flow_state(index_name, db_url)
+        flow = create_code_index_flow(
+            index_name=index_name,
+            codebase_path=codebase_path,
+            include_patterns=config.include_patterns,
+            exclude_patterns=exclude_patterns,
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+        )
+        logger.info("Dropped flow for index '%s' (--fresh)", index_name)
 
     # Setup flow, ensure schema, and run indexing.
     db_url = get_database_url()
@@ -283,7 +321,22 @@ def run_index(
     def _setup_and_update():
         """Setup flow, ensure schema columns, and run flow.update()."""
         flow.setup()
+        # Verify the data table actually exists after setup.
+        # CocoIndex may skip table creation if metadata says the schema is
+        # current, but the table could have been dropped externally (e.g.
+        # failed migration during embedding dimension change).  Raising here
+        # lets the stale-state recovery block clean metadata and retry.
         with psycopg.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = %s",
+                    (table_name,),
+                )
+                if not cur.fetchone():
+                    raise RuntimeError(
+                        f"Table {table_name} does not exist after flow.setup()"
+                    )
             symbol_result = ensure_symbol_columns(conn, table_name)
             ensure_parse_results_table(conn, index_name)
         if symbol_result.get("columns_added"):
@@ -306,6 +359,9 @@ def run_index(
                 "Stale CocoIndex state detected during setup/update — "
                 "resetting and retrying"
             )
+            _get_cs_log().index(
+                "Stale state detected, resetting", level="WARNING", index=index_name
+            )
             try:
                 flow.close()
             except Exception:
@@ -322,6 +378,8 @@ def run_index(
             update_info = _setup_and_update()
         else:
             raise
+
+    _get_cs_log().index("Indexing completed", index=index_name)
 
     # Determine if any files actually changed
     has_changes = True  # conservative default
@@ -341,6 +399,11 @@ def run_index(
             if removed > 0:
                 logger.info(
                     f"Invalidated {removed} cached queries for index '{index_name}'"
+                )
+                _get_cs_log().cache(
+                    "Post-index cache invalidated",
+                    index=index_name,
+                    entries_removed=removed,
                 )
         except Exception as e:
             logger.warning(f"Cache invalidation failed (non-fatal): {e}")

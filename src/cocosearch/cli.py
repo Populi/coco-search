@@ -219,6 +219,9 @@ def index_command(args: argparse.Namespace) -> int:
             branch_info += f" ({commit_hash})"
         console.print(f"[dim]Branch: {branch_info}[/dim]")
 
+    # Resolve embedding provider/model through config precedence and bridge to env vars
+    _embed_provider, _embed_model = resolver.bridge_embedding_config()
+
     # Set status to 'indexing' before starting (best-effort)
     try:
         ensure_metadata_table()
@@ -228,6 +231,8 @@ def index_command(args: argparse.Namespace) -> int:
             branch=branch,
             commit_hash=commit_hash,
             branch_commit_count=branch_commit_count,
+            embedding_provider=_embed_provider,
+            embedding_model=_embed_model,
         )
         set_index_status(index_name, "indexing")
     except Exception:
@@ -273,7 +278,12 @@ def index_command(args: argparse.Namespace) -> int:
         # Register path-to-index mapping for collision detection
         try:
             register_index_path(
-                index_name, codebase_path, branch=branch, commit_hash=commit_hash
+                index_name,
+                codebase_path,
+                branch=branch,
+                commit_hash=commit_hash,
+                embedding_provider=_embed_provider,
+                embedding_model=_embed_model,
             )
         except ValueError as collision_error:
             # Collision detected - show warning but indexing already succeeded
@@ -1597,6 +1607,36 @@ def config_check_command(args: argparse.Namespace) -> int:
     # Show success + current values
     console.print("[green]Environment configuration is valid[/green]\n")
 
+    # Load config for resolver-based source tracking
+    config_path = find_config_file()
+    if config_path:
+        try:
+            project_config = load_project_config(config_path)
+        except ConfigLoadError:
+            project_config = CocoSearchConfig()
+    else:
+        project_config = CocoSearchConfig()
+    check_resolver = ConfigResolver(project_config, config_path)
+
+    def _source_label(source: str) -> str:
+        """Map resolver source to display label."""
+        if source.startswith("env:"):
+            return "environment"
+        if source.startswith("config:") or source == "config":
+            return "config file"
+        return source  # "default", "CLI flag"
+
+    # Resolve embedding provider/model through config precedence
+    provider, provider_source = check_resolver.resolve(
+        "embedding.provider", None, "COCOSEARCH_EMBEDDING_PROVIDER"
+    )
+    provider_source = _source_label(provider_source)
+
+    model, model_source = check_resolver.resolve(
+        "embedding.model", None, "COCOSEARCH_EMBEDDING_MODEL"
+    )
+    model_source = _source_label(model_source)
+
     # Display current environment variables
     table = Table(title="Environment Variables")
     table.add_column("Variable", style="cyan")
@@ -1608,19 +1648,19 @@ def config_check_command(args: argparse.Namespace) -> int:
     db_url_source = "environment" if os.getenv("COCOSEARCH_DATABASE_URL") else "default"
     table.add_row("COCOSEARCH_DATABASE_URL", mask_password(db_url), db_url_source)
 
-    # OLLAMA_URL (optional with default)
-    ollama_url = os.getenv("COCOSEARCH_OLLAMA_URL", DEFAULT_OLLAMA_URL)
-    ollama_url_source = (
-        "environment" if os.getenv("COCOSEARCH_OLLAMA_URL") else "default"
-    )
-    table.add_row("COCOSEARCH_OLLAMA_URL", ollama_url, ollama_url_source)
+    # EMBEDDING_PROVIDER
+    table.add_row("COCOSEARCH_EMBEDDING_PROVIDER", provider, provider_source)
 
-    # EMBEDDING_MODEL (optional with default)
-    embedding_model = os.getenv("COCOSEARCH_EMBEDDING_MODEL", "nomic-embed-text")
-    embedding_model_source = (
-        "environment" if os.getenv("COCOSEARCH_EMBEDDING_MODEL") else "default"
-    )
-    table.add_row("COCOSEARCH_EMBEDDING_MODEL", embedding_model, embedding_model_source)
+    # EMBEDDING_MODEL
+    table.add_row("COCOSEARCH_EMBEDDING_MODEL", model, model_source)
+
+    if provider == "ollama":
+        # OLLAMA_URL (optional with default)
+        ollama_url = os.getenv("COCOSEARCH_OLLAMA_URL", DEFAULT_OLLAMA_URL)
+        ollama_url_source = (
+            "environment" if os.getenv("COCOSEARCH_OLLAMA_URL") else "default"
+        )
+        table.add_row("COCOSEARCH_OLLAMA_URL", ollama_url, ollama_url_source)
 
     console.print(table)
     console.print()
@@ -1632,7 +1672,6 @@ def config_check_command(args: argparse.Namespace) -> int:
     conn_table.add_column("Details", style="dim")
 
     has_failure = False
-    ollama_reachable = False
 
     # PostgreSQL
     try:
@@ -1646,41 +1685,59 @@ def config_check_command(args: argparse.Namespace) -> int:
             "Run: docker compose up -d",
         )
 
-    # Ollama
-    try:
-        check_ollama(ollama_url)
-        conn_table.add_row("Ollama", "[green]✓ connected[/green]", "")
-        ollama_reachable = True
-    except ConnectionError:
-        has_failure = True
-        conn_table.add_row(
-            "Ollama",
-            "[red]✗ unreachable[/red]",
-            "Run: docker compose up -d",
-        )
-
-    # Embedding model
-    if ollama_reachable:
+    if provider == "ollama":
+        # Ollama connectivity checks
+        ollama_reachable = False
         try:
-            check_ollama_model(ollama_url, embedding_model)
-            conn_table.add_row(
-                f"Model ({embedding_model})",
-                "[green]✓ available[/green]",
-                "",
-            )
+            check_ollama(ollama_url)
+            conn_table.add_row("Ollama", "[green]✓ connected[/green]", "")
+            ollama_reachable = True
         except ConnectionError:
             has_failure = True
             conn_table.add_row(
-                f"Model ({embedding_model})",
-                "[red]✗ not found[/red]",
-                f"Run: ollama pull {embedding_model}",
+                "Ollama",
+                "[red]✗ unreachable[/red]",
+                "Run: docker compose --profile ollama up -d",
+            )
+
+        # Embedding model
+        if ollama_reachable:
+            try:
+                check_ollama_model(ollama_url, model)
+                conn_table.add_row(
+                    f"Model ({model})",
+                    "[green]✓ available[/green]",
+                    "",
+                )
+            except ConnectionError:
+                has_failure = True
+                conn_table.add_row(
+                    f"Model ({model})",
+                    "[red]✗ not found[/red]",
+                    f"Run: ollama pull {model}",
+                )
+        else:
+            conn_table.add_row(
+                f"Model ({model})",
+                "[dim]- skipped[/dim]",
+                "Ollama is unreachable",
             )
     else:
-        conn_table.add_row(
-            f"Model ({embedding_model})",
-            "[dim]- skipped[/dim]",
-            "Ollama is unreachable",
-        )
+        # Remote provider: check API key
+        api_key = os.getenv("COCOSEARCH_EMBEDDING_API_KEY")
+        if api_key:
+            conn_table.add_row(
+                "API Key",
+                "[green]✓ set[/green]",
+                f"Provider: {provider}",
+            )
+        else:
+            has_failure = True
+            conn_table.add_row(
+                "API Key",
+                "[red]✗ missing[/red]",
+                "Set COCOSEARCH_EMBEDDING_API_KEY",
+            )
 
     console.print(conn_table)
 
@@ -1702,9 +1759,6 @@ def dashboard_command(args: argparse.Namespace) -> int:
     Returns:
         Exit code (0 for success, 1 for error).
     """
-    import threading
-    import webbrowser
-
     from cocosearch.mcp import run_server
 
     console = Console()
@@ -1738,15 +1792,8 @@ def dashboard_command(args: argparse.Namespace) -> int:
     console.print()
     console.print("[dim]Press Ctrl+C to stop[/dim]")
 
-    # Auto-open browser (opt-out via COCOSEARCH_NO_DASHBOARD=1)
-    no_dashboard = os.environ.get("COCOSEARCH_NO_DASHBOARD", "").strip() == "1"
-    if not no_dashboard:
-        timer = threading.Timer(1.5, lambda: webbrowser.open(dashboard_url))
-        timer.daemon = True
-        timer.start()
-
-    # Suppress run_server()'s own browser open — we already opened above
-    os.environ["COCOSEARCH_NO_DASHBOARD"] = "1"
+    # Let run_server() handle browser open — it fires after init completes,
+    # right before uvicorn starts, so the URL is guaranteed to be reachable.
 
     # Use MCP server with SSE transport (provides HTTP routes)
     try:

@@ -55,16 +55,23 @@ class TestHybridSearchGracefulDegradation:
     def test_hybrid_warning_logged_when_content_text_missing(self, mock_db_pool):
         """Test that warning is logged when content_text column is missing."""
         import cocosearch.search.query as query_module
+        from cocosearch.mcp.log_stream import LogBuffer
 
         # Reset module state for test isolation
         query_module._has_content_text_column = True
         query_module._hybrid_warning_emitted = False
 
+        # Use a real LogBuffer to capture structured log entries
+        buf = LogBuffer()
+        from cocosearch.logging import CsLog
+
+        mock_cs_log = CsLog(buffer=buf)
+
         # Mock check_column_exists to return False (no content_text column)
         with patch.object(
             query_module, "check_column_exists", return_value=False
         ) as mock_check:
-            with patch.object(query_module, "logger") as mock_logger:
+            with patch.object(query_module, "_get_cs_log", return_value=mock_cs_log):
                 with patch.object(query_module, "code_to_embedding") as mock_embedding:
                     mock_embedding.eval.return_value = [0.1] * 1024
 
@@ -84,11 +91,11 @@ class TestHybridSearchGracefulDegradation:
                 # Verify check_column_exists was called
                 mock_check.assert_called_once_with("test_table", "content_text")
 
-                # Verify warning was logged
-                mock_logger.warning.assert_called_once()
-                warning_msg = mock_logger.warning.call_args[0][0]
-                assert "hybrid search" in warning_msg.lower()
-                assert "content_text" in warning_msg
+                # Verify warning was logged via structured logging
+                entries = buf.get_history()
+                warning_entries = [e for e in entries if e.level == "WARNING"]
+                assert len(warning_entries) == 1
+                assert "hybrid search" in warning_entries[0].message.lower()
 
         # Verify flag was set
         assert query_module._has_content_text_column is False
@@ -97,15 +104,22 @@ class TestHybridSearchGracefulDegradation:
     def test_hybrid_warning_logged_only_once(self, mock_db_pool):
         """Test that hybrid warning is logged only once per session."""
         import cocosearch.search.query as query_module
+        from cocosearch.mcp.log_stream import LogBuffer
 
         # Start with warning already emitted
         query_module._has_content_text_column = False
         query_module._hybrid_warning_emitted = True
 
+        # Use a real LogBuffer to capture structured log entries
+        buf = LogBuffer()
+        from cocosearch.logging import CsLog
+
+        mock_cs_log = CsLog(buffer=buf)
+
         with patch.object(
             query_module, "check_column_exists", return_value=False
         ) as mock_check:
-            with patch.object(query_module, "logger") as mock_logger:
+            with patch.object(query_module, "_get_cs_log", return_value=mock_cs_log):
                 with patch.object(query_module, "code_to_embedding") as mock_embedding:
                     mock_embedding.eval.return_value = [0.1] * 1024
 
@@ -126,21 +140,29 @@ class TestHybridSearchGracefulDegradation:
                 mock_check.assert_not_called()
 
                 # Warning should not be logged again
-                mock_logger.warning.assert_not_called()
+                warning_entries = [e for e in buf.get_history() if e.level == "WARNING"]
+                assert len(warning_entries) == 0
 
     def test_no_warning_when_content_text_exists(self, mock_db_pool):
         """Test that no warning is logged when content_text column exists."""
         import cocosearch.search.query as query_module
+        from cocosearch.mcp.log_stream import LogBuffer
 
         # Reset module state
         query_module._has_content_text_column = True
         query_module._hybrid_warning_emitted = False
 
+        # Use a real LogBuffer to capture structured log entries
+        buf = LogBuffer()
+        from cocosearch.logging import CsLog
+
+        mock_cs_log = CsLog(buffer=buf)
+
         # Mock check_column_exists to return True (column exists)
         with patch.object(
             query_module, "check_column_exists", return_value=True
         ) as mock_check:
-            with patch.object(query_module, "logger") as mock_logger:
+            with patch.object(query_module, "_get_cs_log", return_value=mock_cs_log):
                 with patch.object(query_module, "code_to_embedding") as mock_embedding:
                     mock_embedding.eval.return_value = [0.1] * 1024
 
@@ -159,7 +181,8 @@ class TestHybridSearchGracefulDegradation:
                 mock_check.assert_called_once()
 
                 # No warning should be logged
-                mock_logger.warning.assert_not_called()
+                warning_entries = [e for e in buf.get_history() if e.level == "WARNING"]
+                assert len(warning_entries) == 0
 
         # Flag should remain True
         assert query_module._has_content_text_column is True

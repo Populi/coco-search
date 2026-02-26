@@ -521,6 +521,25 @@ select option:checked {
     font-size: 13px;
 }
 
+.infra-banner {
+    background: var(--accent-red);
+    color: white;
+    padding: 16px 20px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.infra-banner h3 {
+    font-size: 18px;
+    margin-bottom: 6px;
+}
+
+.infra-banner p {
+    font-size: 14px;
+    margin-top: 6px;
+    word-break: break-word;
+}
+
 .parse-table {
     width: 100%;
     border-collapse: collapse;
@@ -1144,6 +1163,19 @@ select option:checked {
 .log-level-ERROR { color: var(--accent-red); }
 .log-level-CRITICAL { color: var(--accent-red); font-weight: 700; }
 .log-level-STDERR { color: var(--text-secondary); font-style: italic; }
+
+/* Category badge colors */
+.log-cat { font-weight: 600; margin-right: 4px; }
+.log-cat-search { color: #5bc0de; }
+.log-cat-index { color: var(--accent-green); }
+.log-cat-mcp { color: #c678dd; }
+.log-cat-cache { color: #e0a040; }
+.log-cat-infra { color: #5b9bd5; }
+.log-cat-system { color: var(--text-secondary); }
+.log-cat-deps { color: #56b6c2; }
+
+/* Structured fields */
+.log-fields { color: var(--text-muted); font-style: italic; }
 
 .log-panel-footer {
     display: flex;

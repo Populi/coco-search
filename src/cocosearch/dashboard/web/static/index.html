@@ -38,10 +38,16 @@
                 <div class="terminal-status-line">
                     <span>STATUS: <span class="status-ok">ONLINE</span></span>
                     <span id="uptime">UPTIME: --:--:--</span>
+                    <span id="embeddingInfo" style="display: none;"></span>
                     <button class="logs-btn">LOGS <span id="logBadge" class="log-badge"></span></button>
                 </div>
             </div>
         </header>
+
+        <div id="infraBanner" class="infra-banner" style="display: none;">
+            <h3>Infrastructure Unavailable</h3>
+            <p id="infraDetails"></p>
+        </div>
 
         <div id="notIndexedBanner" class="not-indexed-banner" style="display: none;">
             <h3>Project Not Indexed</h3>

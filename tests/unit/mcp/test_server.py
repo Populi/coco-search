@@ -458,6 +458,84 @@ class TestIndexStats:
         assert result["status"] == "indexed"
 
 
+class TestInjectConfiguredEmbedding:
+    """Tests for _inject_configured_embedding helper."""
+
+    def test_defaults_to_ollama(self, monkeypatch):
+        """Without env vars, returns ollama + nomic-embed-text."""
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_PROVIDER", raising=False)
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "ollama"
+        assert result["configured_embedding_model"] == "nomic-embed-text"
+
+    def test_respects_provider_env(self, monkeypatch):
+        """COCOSEARCH_EMBEDDING_PROVIDER sets provider and default model."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "openai"
+        assert result["configured_embedding_model"] == "text-embedding-3-small"
+
+    def test_respects_model_env(self, monkeypatch):
+        """COCOSEARCH_EMBEDDING_MODEL overrides provider default."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openai")
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_MODEL", "text-embedding-3-large")
+
+        from cocosearch.mcp.server import _inject_configured_embedding
+
+        result = {}
+        _inject_configured_embedding(result)
+
+        assert result["configured_embedding_provider"] == "openai"
+        assert result["configured_embedding_model"] == "text-embedding-3-large"
+
+    def test_build_single_stats_includes_configured_fields(self, monkeypatch):
+        """build_single_stats result contains configured_embedding_* keys."""
+        monkeypatch.setenv("COCOSEARCH_EMBEDDING_PROVIDER", "openrouter")
+        monkeypatch.delenv("COCOSEARCH_EMBEDDING_MODEL", raising=False)
+
+        mock_stats = IndexStats(
+            name="testindex",
+            file_count=10,
+            chunk_count=50,
+            storage_size=1024,
+            storage_size_pretty="1.0 KB",
+            created_at=None,
+            updated_at=None,
+            is_stale=False,
+            staleness_days=-1,
+            languages=[],
+            symbols={},
+            warnings=[],
+            parse_stats={},
+            source_path=None,
+            status="indexed",
+            indexing_elapsed_seconds=None,
+            repo_url=None,
+        )
+
+        with patch("cocoindex.init"):
+            with patch(
+                "cocosearch.mcp.server.get_comprehensive_stats",
+                return_value=mock_stats,
+            ):
+                result = index_stats(index_name="testindex")
+
+        assert result["configured_embedding_provider"] == "openrouter"
+        assert result["configured_embedding_model"] == "openai/text-embedding-3-small"
+
+
 class TestClearIndex:
     """Tests for clear_index MCP tool."""
 
@@ -581,8 +659,8 @@ class TestEmptyDatabase:
 
         assert result == []
 
-    def test_index_stats_returns_error_on_init_failure(self):
-        """index_stats returns error dict when cocoindex.init() fails."""
+    def test_index_stats_returns_empty_on_init_failure(self):
+        """index_stats returns empty list when cocoindex.init() fails gracefully."""
         with (
             patch("cocosearch.mcp.server._cocoindex_initialized", False),
             patch(
@@ -594,16 +672,14 @@ class TestEmptyDatabase:
         ):
             result = index_stats()
 
-        assert isinstance(result, dict)
-        assert result["success"] is False
-        assert (
-            "not initialized" in result["error"].lower()
-            or "index" in result["error"].lower()
-        )
+        # _ensure_cocoindex_init now catches the exception and returns False,
+        # so build_all_stats proceeds and returns an empty list
+        assert isinstance(result, list)
+        assert result == []
 
     @pytest.mark.asyncio
-    async def test_search_code_returns_error_on_init_failure(self, mock_db_pool):
-        """search_code returns error when cocoindex.init() fails on empty DB."""
+    async def test_search_code_returns_empty_on_init_failure(self, mock_db_pool):
+        """search_code returns empty results when cocoindex.init() fails on empty DB."""
         pool, cursor, _conn = mock_db_pool(
             results=[
                 ("codeindex_test__test_chunks",),  # list_indexes finds an index
@@ -630,9 +706,11 @@ class TestEmptyDatabase:
                 limit=5,
             )
 
+        # _ensure_cocoindex_init returns False, so search_code returns early
+        # with a "Database not initialized" error dict
         assert isinstance(result, list)
         assert len(result) == 1
-        assert "error" in result[0]
+        assert result[0]["error"] == "Database not initialized"
 
 
 class TestMCPToolRegistration:
@@ -684,85 +762,93 @@ class TestRunServer:
     def test_stdio_transport_calls_mcp_run_stdio(self, monkeypatch):
         """stdio transport calls mcp.run with transport='stdio'."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log") as _mock_log:
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="stdio")
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                run_server(transport="stdio")
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
     def test_sse_transport_configures_settings_and_calls_mcp_run(self, monkeypatch):
         """sse transport sets mcp.settings and calls mcp.run."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            # Create mock settings object
-            mock_settings = MagicMock()
-            mock_mcp.settings = mock_settings
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                # Create mock settings object
+                mock_settings = MagicMock()
+                mock_mcp.settings = mock_settings
 
-            from cocosearch.mcp.server import run_server
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="sse", host="127.0.0.1", port=8080)
+                run_server(transport="sse", host="127.0.0.1", port=8080)
 
-            # Verify settings were configured
-            assert mock_settings.host == "127.0.0.1"
-            assert mock_settings.port == 8080
-            # Verify mcp.run called with sse transport
-            mock_mcp.run.assert_called_once_with(transport="sse")
+                # Verify settings were configured
+                assert mock_settings.host == "127.0.0.1"
+                assert mock_settings.port == 8080
+                # Verify mcp.run called with sse transport
+                mock_mcp.run.assert_called_once_with(transport="sse")
 
     def test_http_transport_configures_settings_and_calls_streamable_http(
         self, monkeypatch
     ):
         """http transport sets mcp.settings and calls mcp.run with 'streamable-http'."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            # Create mock settings object
-            mock_settings = MagicMock()
-            mock_mcp.settings = mock_settings
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                # Create mock settings object
+                mock_settings = MagicMock()
+                mock_mcp.settings = mock_settings
 
-            from cocosearch.mcp.server import run_server
+                from cocosearch.mcp.server import run_server
 
-            run_server(transport="http", host="0.0.0.0", port=3000)
+                run_server(transport="http", host="0.0.0.0", port=3000)
 
-            # Verify settings were configured
-            assert mock_settings.host == "0.0.0.0"
-            assert mock_settings.port == 3000
-            # Verify mcp.run called with streamable-http transport
-            mock_mcp.run.assert_called_once_with(transport="streamable-http")
+                # Verify settings were configured
+                assert mock_settings.host == "0.0.0.0"
+                assert mock_settings.port == 3000
+                # Verify mcp.run called with streamable-http transport
+                mock_mcp.run.assert_called_once_with(transport="streamable-http")
 
     def test_invalid_transport_raises_valueerror(self, monkeypatch):
         """Invalid transport raises ValueError."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp"):
-            from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp"):
+                from cocosearch.mcp.server import run_server
 
-            with pytest.raises(ValueError, match="Invalid transport"):
-                run_server(transport="invalid")
+                with pytest.raises(ValueError, match="Invalid transport"):
+                    run_server(transport="invalid")
 
     def test_stdio_starts_dashboard_server(self, monkeypatch):
         """stdio transport starts background dashboard server and opens browser."""
         monkeypatch.delenv("COCOSEARCH_NO_DASHBOARD", raising=False)
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            with patch(
-                "cocosearch.dashboard.server.start_dashboard_server",
-                return_value="http://127.0.0.1:8080/dashboard",
-            ) as mock_start:
-                with patch("cocosearch.mcp.server._open_browser") as mock_open:
-                    from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                with patch(
+                    "cocosearch.dashboard.server.start_dashboard_server",
+                    return_value="http://127.0.0.1:8080/dashboard",
+                ) as mock_start:
+                    with patch("cocosearch.mcp.server._open_browser") as mock_open:
+                        from cocosearch.mcp.server import run_server
 
-                    run_server(transport="stdio")
-                    mock_start.assert_called_once()
-                    mock_open.assert_called_once_with("http://127.0.0.1:8080/dashboard")
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                        run_server(transport="stdio")
+                        mock_start.assert_called_once()
+                        mock_open.assert_called_once_with(
+                            "http://127.0.0.1:8080/dashboard"
+                        )
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
     def test_no_dashboard_env_skips_dashboard(self, monkeypatch):
         """COCOSEARCH_NO_DASHBOARD=1 skips dashboard and browser."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
-        with patch("cocosearch.mcp.server.mcp") as mock_mcp:
-            with patch("cocosearch.mcp.server._open_browser") as mock_open:
-                from cocosearch.mcp.server import run_server
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                with patch("cocosearch.mcp.server._open_browser") as mock_open:
+                    from cocosearch.mcp.server import run_server
 
-                run_server(transport="stdio")
-                mock_open.assert_not_called()
-            mock_mcp.run.assert_called_once_with(transport="stdio")
+                    run_server(transport="stdio")
+                    mock_open.assert_not_called()
+                mock_mcp.run.assert_called_once_with(transport="stdio")
 
 
 class TestRegisterWithGit:
@@ -795,6 +881,8 @@ class TestRegisterWithGit:
             branch="main",
             commit_hash="abc1234",
             branch_commit_count=1234,
+            embedding_provider="ollama",
+            embedding_model="nomic-embed-text",
         )
 
     def test_passes_none_when_not_git_repo(self):
@@ -818,6 +906,8 @@ class TestRegisterWithGit:
             branch=None,
             commit_hash=None,
             branch_commit_count=None,
+            embedding_provider="ollama",
+            embedding_model="nomic-embed-text",
         )
 
     def test_index_codebase_registers_with_git(self, tmp_codebase):

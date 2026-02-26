@@ -7,10 +7,10 @@ CocoSearch provides an MCP (Model Context Protocol) server for semantic code sea
 Start the infrastructure services:
 
 ```bash
-docker compose up -d
+docker compose --profile ollama up -d
 ```
 
-This gives you PostgreSQL (with pgvector) on port `5432` and Ollama (with `nomic-embed-text`) on port `11434`. The database connection defaults to `postgresql://cocosearch:cocosearch@localhost:5432/cocosearch`, which matches the Docker credentials -- no environment variables needed.
+This gives you PostgreSQL (with pgvector) on port `5432` and Ollama (with `nomic-embed-text`) on port `11434`. If using a remote embedding provider (OpenAI, OpenRouter), you only need PostgreSQL: `docker compose up -d`. The database connection defaults to `postgresql://cocosearch:cocosearch@localhost:5432/cocosearch`, which matches the Docker credentials -- no environment variables needed.
 
 ### Available MCP Tools
 
@@ -166,6 +166,35 @@ Add an `"env"` block (or `"environment"` for OpenCode) to your server config:
   }
 }
 ```
+
+### Remote Embedding Providers
+
+By default, CocoSearch uses Ollama for embeddings. To use a remote provider (OpenAI, OpenRouter) with the MCP server, pass the provider and API key as environment variables during registration.
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope user \
+  --env COCOSEARCH_EMBEDDING_PROVIDER=openai \
+  --env COCOSEARCH_EMBEDDING_API_KEY=sk-... \
+  cocosearch -- \
+  uvx --from cocosearch cocosearch mcp --project-from-cwd
+```
+
+**Claude Desktop / OpenCode (JSON config):**
+
+Add to your server's `"env"` block (or `"environment"` for OpenCode):
+
+```json
+{
+  "env": {
+    "COCOSEARCH_EMBEDDING_PROVIDER": "openai",
+    "COCOSEARCH_EMBEDDING_API_KEY": "sk-..."
+  }
+}
+```
+
+Supported providers: `ollama` (default), `openai`, `openrouter`. With a remote provider, you do not need Ollama running — only PostgreSQL is required.
 
 ### Project Detection
 

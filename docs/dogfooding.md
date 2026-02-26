@@ -46,7 +46,7 @@ uv run cocosearch search "config file discovery" --pretty
 
 ### MCP Server (Local Development)
 
-Just make sure Docker containers are running (`docker compose up -d`).
+Just make sure Docker containers are running (`docker compose --profile ollama up -d`).
 
 To run the MCP server manually (e.g., for debugging):
 

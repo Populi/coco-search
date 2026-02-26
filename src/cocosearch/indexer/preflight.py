@@ -13,14 +13,30 @@ import psycopg
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 
+def _get_cs_log():
+    from cocosearch.logging import cs_log
+
+    return cs_log
+
+
 def check_infrastructure(
-    db_url: str, ollama_url: str | None, embedding_model: str = "nomic-embed-text"
+    db_url: str,
+    ollama_url: str | None = None,
+    embedding_model: str = "nomic-embed-text",
+    provider: str = "ollama",
 ) -> None:
-    """Check PostgreSQL and Ollama are reachable. Raises ConnectionError if not."""
+    """Check infrastructure is reachable. Raises ConnectionError if not.
+
+    For Ollama provider: checks PostgreSQL, Ollama server, and model availability.
+    For remote providers (OpenAI, OpenRouter): checks PostgreSQL and API key.
+    """
     check_postgres(db_url)
-    resolved_url = ollama_url or DEFAULT_OLLAMA_URL
-    check_ollama(resolved_url)
-    check_ollama_model(resolved_url, embedding_model)
+    if provider == "ollama":
+        resolved_url = ollama_url or DEFAULT_OLLAMA_URL
+        check_ollama(resolved_url)
+        check_ollama_model(resolved_url, embedding_model)
+    else:
+        check_api_key(provider)
 
 
 def check_postgres(db_url: str) -> None:
@@ -28,22 +44,26 @@ def check_postgres(db_url: str) -> None:
         with psycopg.connect(db_url, connect_timeout=3) as conn:
             conn.execute("SELECT 1")
     except psycopg.OperationalError as e:
+        _get_cs_log().infra("PostgreSQL unreachable", level="ERROR", error=str(e))
         raise ConnectionError(
             f"PostgreSQL is not reachable at {db_url.split('@')[-1].split('/')[0]}. "
             f"Start it with: docker compose up -d\n"
             f"Details: {e}"
         ) from e
+    _get_cs_log().infra("PostgreSQL reachable")
 
 
 def check_ollama(ollama_url: str) -> None:
     try:
         urllib.request.urlopen(ollama_url, timeout=3)  # noqa: S310
     except (urllib.error.URLError, OSError) as e:
+        _get_cs_log().infra("Ollama unreachable", level="ERROR", error=str(e))
         raise ConnectionError(
             f"Ollama is not reachable at {ollama_url}. "
-            f"Start it with: docker compose up -d\n"
+            f"Start it with: docker compose --profile ollama up -d\n"
             f"Details: {e}"
         ) from e
+    _get_cs_log().infra("Ollama reachable")
 
 
 def check_ollama_model(ollama_url: str, model: str) -> None:
@@ -63,3 +83,18 @@ def check_ollama_model(ollama_url: str, model: str) -> None:
             f"Pull it with: ollama pull {model}\n"
             f"Available models: {', '.join(available) or 'none'}"
         )
+
+
+def check_api_key(provider: str) -> None:
+    """Check that COCOSEARCH_EMBEDDING_API_KEY is set for remote providers."""
+    import os
+
+    api_key = os.environ.get("COCOSEARCH_EMBEDDING_API_KEY")
+    if not api_key:
+        _get_cs_log().infra(f"API key missing for {provider}", level="ERROR")
+        raise ConnectionError(
+            f"Embedding provider '{provider}' requires an API key.\n"
+            f"Set COCOSEARCH_EMBEDDING_API_KEY in your environment.\n"
+            f"Example: export COCOSEARCH_EMBEDDING_API_KEY=sk-..."
+        )
+    _get_cs_log().infra(f"API key configured for {provider}")

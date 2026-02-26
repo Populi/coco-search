@@ -15,7 +15,10 @@ from .schema import (
     ConfigError,
     EmbeddingSection,
     IndexingSection,
+    LoggingSection,
     SearchSection,
+    VALID_EMBEDDING_PROVIDERS,
+    default_model_for_provider,
 )
 
 __all__ = [
@@ -23,6 +26,7 @@ __all__ = [
     "ConfigError",
     "EmbeddingSection",
     "IndexingSection",
+    "LoggingSection",
     "SearchSection",
     "find_config_file",
     "load_config",
@@ -37,4 +41,6 @@ __all__ = [
     "mask_password",
     "DEFAULT_DATABASE_URL",
     "get_database_url",
+    "VALID_EMBEDDING_PROVIDERS",
+    "default_model_for_provider",
 ]

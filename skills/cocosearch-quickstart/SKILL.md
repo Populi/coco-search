@@ -23,14 +23,14 @@ Before indexing, verify the required services are running.
    ```bash
    curl -s http://localhost:11434/api/tags | head -c 200
    ```
-   - If not running: `docker compose up -d` or `ollama serve`
+   - If not running: `docker compose --profile ollama up -d` or `ollama serve`
    - If running but no model: `ollama pull nomic-embed-text`
 
 **If both are running:** Proceed to Step 2.
 
 **If neither is running and user has CocoSearch cloned:**
 ```bash
-cd /path/to/cocosearch && docker compose up -d
+cd /path/to/cocosearch && docker compose --profile ollama up -d
 ```
 This starts both PostgreSQL and Ollama in one command.
 

@@ -15,7 +15,7 @@ Contributions are welcome! Whether it's a bug fix, a new language handler, impro
 
 ```bash
 # Start infrastructure (PostgreSQL 17 + pgvector, Ollama)
-docker compose up -d
+docker compose --profile ollama up -d
 
 # Install dependencies
 uv sync

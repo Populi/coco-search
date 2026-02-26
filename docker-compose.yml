@@ -27,11 +27,14 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+        required: false
     ports:
       - "${COCOSEARCH_MCP_PORT:-3000}:${COCOSEARCH_MCP_PORT:-3000}"
     environment:
       COCOSEARCH_DATABASE_URL: postgresql://cocosearch:cocosearch@db:5432/cocosearch
       COCOSEARCH_OLLAMA_URL: http://ollama:11434
+      # COCOSEARCH_EMBEDDING_PROVIDER: ollama  # default; set to openai or openrouter for remote embeddings
+      # COCOSEARCH_EMBEDDING_API_KEY: ${COCOSEARCH_EMBEDDING_API_KEY:-}
       COCOSEARCH_NO_DASHBOARD: "1"
       COCOSEARCH_MCP_PORT: ${COCOSEARCH_MCP_PORT:-3000}
       COCOSEARCH_PROJECTS_DIR: /projects
@@ -46,6 +49,7 @@ services:
     restart: unless-stopped
 
   ollama:
+    profiles: ["ollama"]
     image: ollama/ollama:latest
     container_name: cocosearch-ollama
     ports:

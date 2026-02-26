@@ -234,7 +234,7 @@ Output includes an environment variable table and a connectivity table:
 | Ollama               | ✓ connected     |                                |
 | Model (nomic-embed-text) | ✓ available |                                |
 
-If a service is unreachable, the status shows `✗ unreachable` with a remediation hint (e.g., `Run: docker compose up -d`). The model check is skipped if Ollama is unreachable.
+If a service is unreachable, the status shows `✗ unreachable` with a remediation hint (e.g., `Run: docker compose up -d` for PostgreSQL, `Run: docker compose --profile ollama up -d` for Ollama). The model check is skipped if Ollama is unreachable.
 
 **Show resolved configuration:** `uv run cocosearch config show`
 

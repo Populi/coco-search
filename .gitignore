@@ -60,4 +60,5 @@ docker_data/**
 
 .claude/**
 .worktrees/
+.playwright-mcp/
 docs/plans/**

@@ -229,6 +229,8 @@ class IndexStats:
     commits_behind: int | None = None  # How many commits behind HEAD
     branch_commit_count: int | None = None  # Total commits in branch at index time
     grammars: list[dict] = field(default_factory=list)  # Per-grammar stats
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization.
@@ -879,6 +881,8 @@ def get_comprehensive_stats(
     branch = metadata.get("branch") if metadata else None
     commit_hash = metadata.get("commit_hash") if metadata else None
     branch_commit_count = metadata.get("branch_commit_count") if metadata else None
+    embedding_provider = metadata.get("embedding_provider") if metadata else None
+    embedding_model = metadata.get("embedding_model") if metadata else None
 
     # Check branch staleness (best-effort, skip if git not available)
     branch_staleness = None
@@ -921,4 +925,6 @@ def get_comprehensive_stats(
         commits_behind=commits_behind,
         branch_commit_count=branch_commit_count,
         grammars=grammars,
+        embedding_provider=embedding_provider,
+        embedding_model=embedding_model,
     )

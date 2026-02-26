@@ -250,6 +250,31 @@ class ConfigResolver:
 
         return None
 
+    def bridge_embedding_config(self) -> tuple[str, str]:
+        """Resolve embedding config and bridge to env vars.
+
+        Ensures COCOSEARCH_EMBEDDING_PROVIDER, COCOSEARCH_EMBEDDING_MODEL, and
+        COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION env vars reflect the full
+        precedence chain (env > config file > default).
+
+        Returns:
+            Tuple of (provider, model).
+        """
+        provider, _ = self.resolve(
+            "embedding.provider", None, "COCOSEARCH_EMBEDDING_PROVIDER"
+        )
+        model, _ = self.resolve("embedding.model", None, "COCOSEARCH_EMBEDDING_MODEL")
+        dim, _ = self.resolve(
+            "embedding.outputDimension", None, "COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION"
+        )
+
+        os.environ["COCOSEARCH_EMBEDDING_PROVIDER"] = str(provider)
+        os.environ["COCOSEARCH_EMBEDDING_MODEL"] = str(model)
+        if dim is not None:
+            os.environ["COCOSEARCH_EMBEDDING_OUTPUT_DIMENSION"] = str(dim)
+
+        return provider, model
+
     def all_field_paths(self) -> list[str]:
         """Get list of all resolvable field paths.
 

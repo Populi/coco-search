@@ -1,6 +1,6 @@
 # CocoSearch Architecture Overview
 
-CocoSearch is a hybrid semantic code search system that runs entirely locally. This document provides a high-level overview of the system's components, data flow, and design decisions.
+CocoSearch is a local-first hybrid semantic code search system. This document provides a high-level overview of the system's components, data flow, and design decisions.
 
 ## Core Concepts
 
@@ -12,7 +12,7 @@ CocoSearch is a hybrid semantic code search system that runs entirely locally. T
 
 ## System Components
 
-**Ollama:** Local embedding model server running `nomic-embed-text`, which generates 768-dimensional vectors from code chunks. No external API calls — everything runs on your machine. Implementation: `src/cocosearch/indexer/embedder.py`
+**Embedding Provider:** Generates 768-dimensional vectors from code chunks. By default, Ollama runs `nomic-embed-text` locally — no API keys, no network calls. Optional remote providers (OpenAI with `text-embedding-3-small`, OpenRouter) are available for teams that prefer managed infrastructure. Implementation: `src/cocosearch/indexer/embedder.py`
 
 **PostgreSQL + pgvector:** Database storing code chunks with their vector embeddings. The pgvector extension enables efficient cosine similarity search over embedding vectors. Also provides full-text search via tsvector columns for keyword matching. Implementation: `src/cocosearch/search/db.py`
 
@@ -29,7 +29,7 @@ The indexing pipeline transforms a codebase into searchable vector embeddings:
 1. **File Discovery:** Read codebase files respecting `.gitignore` patterns and configured include/exclude filters
 2. **Language Detection:** Identify language from grammar handlers (path + content matching), filename patterns (Dockerfile), or file extension. Grammar match takes priority over extension.
 3. **Semantic Chunking:** `SplitRecursively` routes to Tree-sitter (built-in languages), custom handler regex separators (HCL, Dockerfile, Bash, grammars), or plain-text splitting (everything else). Default: 1000 bytes, 300 overlap.
-4. **Embedding Generation:** File path prepended to chunk text for context, then Ollama's `nomic-embed-text` model converts each chunk to a 768-dimensional vector
+4. **Embedding Generation:** File path prepended to chunk text for context, then the configured embedding provider (Ollama by default, or OpenAI/OpenRouter) converts each chunk to a 768-dimensional vector
 5. **Metadata Extraction:** Extract DevOps block types (pipeline, job, stage), symbol information (function/class/method names, signatures), and language identifiers
 6. **Text Preprocessing:** Generate tsvector representation for full-text search, including filename-derived tokens for path-aware keyword matching
 7. **Storage:** Insert chunks into PostgreSQL with vector index (cosine distance) and GIN index (tsvector)
@@ -88,7 +88,7 @@ See [MCP Tools Reference](mcp-tools.md) for complete parameter documentation, re
 
 ## Key Design Decisions
 
-**Local-first:** All processing happens on your machine. Ollama runs the embedding model locally, PostgreSQL stores data locally, no external API calls. Your code never leaves your environment.
+**Local-first:** All processing happens on your machine by default. Ollama runs the embedding model locally, PostgreSQL stores data locally. Optional remote embedding providers (OpenAI, OpenRouter) send only chunk text for embedding — all indexing, storage, and search remain local. Your code never leaves your environment.
 
 **Infra-only Docker:** Docker provides PostgreSQL+pgvector and Ollama infrastructure only. CocoSearch runs natively via `uvx` for faster iteration and simpler updates. This keeps the Docker image lightweight and avoids Python dependency management inside containers.
 

@@ -11,10 +11,12 @@ Provides Model Context Protocol server with tools for:
 # CRITICAL: Configure logging to stderr immediately before any other imports
 # This prevents stdout corruption of the JSON-RPC protocol
 import asyncio
+import functools
 import os
 import sys
 import logging
 import threading
+import time as _time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,6 +29,8 @@ _active_indexing: dict[str, tuple[threading.Thread, threading.Event]] = {}
 _indexing_lock = threading.Lock()
 _cocoindex_initialized = False
 _cocoindex_init_lock = threading.Lock()
+_cocoindex_init_failed_at: float = 0.0  # monotonic timestamp of last failure
+_COCOINDEX_RETRY_COOLDOWN = 30.0  # seconds before retrying after failure
 
 from pathlib import Path  # noqa: E402
 from typing import Annotated  # noqa: E402
@@ -69,20 +73,64 @@ from cocosearch.search.analyze import analyze as run_analyze  # noqa: E402
 from cocosearch.search.context_expander import ContextExpander  # noqa: E402
 
 
-def _ensure_cocoindex_init() -> None:
+def _get_cs_log():
+    from cocosearch.logging import cs_log
+
+    return cs_log
+
+
+def _ensure_cocoindex_init(timeout: float = 5.0) -> bool:
     """Initialize CocoIndex exactly once, thread-safely.
+
+    Returns True if init succeeded, False if it timed out or failed.
+    After a failure, returns False immediately for ``_COCOINDEX_RETRY_COOLDOWN``
+    seconds to avoid repeated timeout waits and downstream pool spam.
 
     cocoindex.init() is synchronous and triggers a RuntimeWarning when called
     inside an async event loop. By calling it once (guarded by a lock) we
     avoid the repeated sync-inside-async warnings from every HTTP/MCP handler.
     """
-    global _cocoindex_initialized
+    global _cocoindex_initialized, _cocoindex_init_failed_at
     if _cocoindex_initialized:
-        return
+        return True
+    # Cooldown: don't retry if we recently failed
+    if _cocoindex_init_failed_at and (
+        _time.monotonic() - _cocoindex_init_failed_at < _COCOINDEX_RETRY_COOLDOWN
+    ):
+        return False
     with _cocoindex_init_lock:
-        if not _cocoindex_initialized:
-            cocoindex.init()
+        if _cocoindex_initialized:
+            return True
+        # Re-check cooldown inside the lock (another thread may have just failed)
+        if _cocoindex_init_failed_at and (
+            _time.monotonic() - _cocoindex_init_failed_at < _COCOINDEX_RETRY_COOLDOWN
+        ):
+            return False
+
+        import concurrent.futures
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(cocoindex.init)
+        try:
+            future.result(timeout=timeout)
             _cocoindex_initialized = True
+            executor.shutdown(wait=False)
+            return True
+        except concurrent.futures.TimeoutError:
+            # Don't wait for the stuck thread — let the server proceed
+            executor.shutdown(wait=False, cancel_futures=True)
+            _cocoindex_init_failed_at = _time.monotonic()
+            logger.warning(
+                "CocoIndex init timed out after %.1fs — "
+                "infrastructure may be unavailable",
+                timeout,
+            )
+            return False
+        except Exception as e:
+            executor.shutdown(wait=False)
+            _cocoindex_init_failed_at = _time.monotonic()
+            logger.warning("CocoIndex init failed: %s", e)
+            return False
 
 
 def _apply_thread_liveness_status(
@@ -113,18 +161,39 @@ def _apply_thread_liveness_status(
 
 def _register_with_git(index_name: str, project_path: str) -> None:
     """Register index path with current git branch/commit metadata."""
+    import os
+
+    from cocosearch.config.schema import default_model_for_provider
     from cocosearch.management.git import get_branch_commit_count
 
     branch = get_current_branch(project_path)
     commit_hash = get_commit_hash(project_path)
     branch_commit_count = get_branch_commit_count(project_path)
+    embed_provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    embed_model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(embed_provider)
+    )
     register_index_path(
         index_name,
         project_path,
         branch=branch,
         commit_hash=commit_hash,
         branch_commit_count=branch_commit_count,
+        embedding_provider=embed_provider,
+        embedding_model=embed_model,
     )
+
+
+def _inject_configured_embedding(result: dict) -> None:
+    """Add currently configured embedding provider/model to stats dict."""
+    from cocosearch.config.schema import default_model_for_provider
+
+    provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(provider)
+    )
+    result["configured_embedding_provider"] = provider
+    result["configured_embedding_model"] = model
 
 
 def build_all_stats(include_failures: bool = False) -> list[dict]:
@@ -133,7 +202,8 @@ def build_all_stats(include_failures: bool = False) -> list[dict]:
     Shared by MCP API routes and the background dashboard server.
     Calls _ensure_cocoindex_init() internally.
     """
-    _ensure_cocoindex_init()
+    if not _ensure_cocoindex_init():
+        return []
     indexes = mgmt_list_indexes()
     logger.debug(
         "build_all_stats: found %d indexes: %s",
@@ -146,6 +216,7 @@ def build_all_stats(include_failures: bool = False) -> list[dict]:
             stats = get_comprehensive_stats(idx["name"])
             result = stats.to_dict()
             _apply_thread_liveness_status(idx["name"], result, stats.status)
+            _inject_configured_embedding(result)
             if include_failures:
                 result["parse_failures"] = get_parse_failures(idx["name"])
                 result["grammar_failures"] = get_grammar_failures(idx["name"])
@@ -163,10 +234,14 @@ def build_single_stats(index_name: str, include_failures: bool = False) -> dict:
     Calls _ensure_cocoindex_init() internally.
     Raises ValueError if the index is not found.
     """
-    _ensure_cocoindex_init()
+    if not _ensure_cocoindex_init():
+        raise ValueError(
+            "Database not initialized. Start infrastructure with: docker compose up -d"
+        )
     stats = get_comprehensive_stats(index_name)
     result = stats.to_dict()
     _apply_thread_liveness_status(index_name, result, stats.status)
+    _inject_configured_embedding(result)
     if include_failures:
         result["parse_failures"] = get_parse_failures(index_name)
         result["grammar_failures"] = get_grammar_failures(index_name)
@@ -183,6 +258,59 @@ register_roots_notification(mcp)
 async def health_check(request) -> JSONResponse:
     """Health check endpoint. Also see /dashboard for web UI."""
     return JSONResponse({"status": "ok"})
+
+
+def _check_infra_sync() -> dict:
+    """Run infrastructure checks synchronously (called via to_thread)."""
+    import os
+
+    from cocosearch.config.env_validation import get_database_url
+    from cocosearch.config.schema import default_model_for_provider
+    from cocosearch.indexer.preflight import (
+        check_api_key,
+        check_ollama,
+        check_ollama_model,
+        check_postgres,
+    )
+
+    db_url = get_database_url()
+    provider = os.environ.get("COCOSEARCH_EMBEDDING_PROVIDER", "ollama")
+    model = os.environ.get(
+        "COCOSEARCH_EMBEDDING_MODEL", default_model_for_provider(provider)
+    )
+    ollama_url = os.environ.get("COCOSEARCH_OLLAMA_URL", "http://localhost:11434")
+
+    # Check database
+    db_status: dict = {"ok": True}
+    try:
+        check_postgres(db_url)
+    except ConnectionError as e:
+        db_status = {"ok": False, "error": str(e)}
+
+    # Check embedding provider
+    embed_status: dict = {"ok": True, "provider": provider, "model": model}
+    try:
+        if provider == "ollama":
+            check_ollama(ollama_url)
+            check_ollama_model(ollama_url, model)
+        else:
+            check_api_key(provider)
+    except ConnectionError as e:
+        embed_status["ok"] = False
+        embed_status["error"] = str(e)
+
+    return {
+        "database": db_status,
+        "embedding": embed_status,
+        "all_ok": db_status["ok"] and embed_status["ok"],
+    }
+
+
+@mcp.custom_route("/api/infra", methods=["GET"])
+async def api_infra(request) -> JSONResponse:
+    """Infrastructure status — checks DB and embedding provider availability."""
+    result = await asyncio.to_thread(_check_infra_sync)
+    return JSONResponse(result)
 
 
 # SSE heartbeat endpoint for dashboard disconnect detection
@@ -225,14 +353,14 @@ async def api_logs(request) -> StreamingResponse:
         try:
             # Replay history
             for entry in buf.get_history():
-                yield f"data: {_json.dumps({'ts': entry.timestamp, 'level': entry.level, 'name': entry.name, 'msg': entry.message})}\n\n"
+                yield f"data: {_json.dumps({'ts': entry.timestamp, 'level': entry.level, 'cat': entry.category, 'msg': entry.message, 'fields': entry.fields})}\n\n"
             yield "event: history_done\ndata: {}\n\n"
 
             # Stream live entries
             while True:
                 try:
                     entry = await asyncio.wait_for(q.get(), timeout=30)
-                    yield f"data: {_json.dumps({'ts': entry.timestamp, 'level': entry.level, 'name': entry.name, 'msg': entry.message})}\n\n"
+                    yield f"data: {_json.dumps({'ts': entry.timestamp, 'level': entry.level, 'cat': entry.category, 'msg': entry.message, 'fields': entry.fields})}\n\n"
                 except asyncio.TimeoutError:
                     # Keepalive
                     yield ": keepalive\n\n"
@@ -253,7 +381,10 @@ async def api_logs(request) -> StreamingResponse:
 async def serve_dashboard(request) -> HTMLResponse:
     """Serve the web dashboard HTML."""
     html_content = get_dashboard_html()
-    return HTMLResponse(content=html_content)
+    return HTMLResponse(
+        content=html_content,
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # Static file serving for dashboard CSS/JS assets
@@ -275,7 +406,11 @@ async def serve_static(request) -> FileResponse | JSONResponse:
         return JSONResponse({"error": "Not found"}, status_code=404)
     suffix = file_path.suffix.lower()
     media_type = _CONTENT_TYPES.get(suffix)
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(
+        file_path,
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 # Stats API endpoints
@@ -513,7 +648,8 @@ def _build_project_response(env_path: str) -> JSONResponse:
     path_collision = False
     collision_message = None
     try:
-        _ensure_cocoindex_init()
+        if not _ensure_cocoindex_init():
+            raise ConnectionError("Infrastructure unavailable")
         indexes = mgmt_list_indexes()
         index_names = {idx["name"] for idx in indexes}
         is_indexed = index_name in index_names
@@ -741,7 +877,8 @@ async def api_delete_index(request) -> JSONResponse:
 def _build_list_response() -> JSONResponse:
     """Build index list response (sync, runs in thread pool)."""
     try:
-        _ensure_cocoindex_init()
+        if not _ensure_cocoindex_init():
+            return JSONResponse([])
         indexes = mgmt_list_indexes()
     except Exception:
         return JSONResponse([])
@@ -782,12 +919,12 @@ def _discover_projects() -> JSONResponse:
         return JSONResponse([])
 
     existing_indexes: set[str] = set()
-    try:
-        _ensure_cocoindex_init()
-        for idx in mgmt_list_indexes():
-            existing_indexes.add(idx["name"])
-    except Exception:
-        pass
+    if _ensure_cocoindex_init():
+        try:
+            for idx in mgmt_list_indexes():
+                existing_indexes.add(idx["name"])
+        except Exception:
+            pass
 
     projects = []
     try:
@@ -849,10 +986,7 @@ async def api_analyze(request) -> JSONResponse:
     symbol_name = body.get("symbol_name") or None
     no_cache = body.get("no_cache", True)
 
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return JSONResponse(
             {"error": "Database not initialized. Index a codebase first."},
             status_code=503,
@@ -976,10 +1110,7 @@ async def api_search(request) -> JSONResponse:
     context_before = body.get("context_before")
     context_after = body.get("context_after")
 
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return JSONResponse(
             {"error": "Database not initialized. Index a codebase first."},
             status_code=503,
@@ -1477,7 +1608,104 @@ def _build_editor_command(editor: str, file_path: str, line: int | None) -> list
     return [editor_path, file_path]
 
 
+def _truncate(value, max_len=200):
+    """Truncate string representation for logging."""
+    s = str(value)
+    return s[:max_len] + "..." if len(s) > max_len else s
+
+
+def log_mcp_tool(func):
+    """Decorator that logs MCP tool entry and exit with cs_log.mcp()."""
+    if asyncio.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            from cocosearch.logging import cs_log
+
+            tool_name = func.__name__
+            # Extract key params (skip 'ctx' and internal args)
+            key_params = {
+                k: _truncate(v)
+                for k, v in kwargs.items()
+                if k != "ctx" and v is not None
+            }
+            cs_log.mcp(f"{tool_name} called", **key_params)
+
+            start = _time.monotonic()
+            try:
+                result = await func(*args, **kwargs)
+                elapsed_ms = round((_time.monotonic() - start) * 1000)
+
+                # Summarize result
+                if isinstance(result, list):
+                    cs_log.mcp(
+                        f"{tool_name} completed",
+                        results=len(result),
+                        latency_ms=elapsed_ms,
+                    )
+                elif isinstance(result, dict):
+                    cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
+                else:
+                    cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
+                return result
+            except Exception as e:
+                elapsed_ms = round((_time.monotonic() - start) * 1000)
+                cs_log.mcp(
+                    f"{tool_name} failed",
+                    level="ERROR",
+                    error=_truncate(str(e)),
+                    latency_ms=elapsed_ms,
+                )
+                raise
+
+        return wrapper
+    else:
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            from cocosearch.logging import cs_log
+
+            tool_name = func.__name__
+            # Extract key params (skip 'ctx' and internal args)
+            key_params = {
+                k: _truncate(v)
+                for k, v in kwargs.items()
+                if k != "ctx" and v is not None
+            }
+            cs_log.mcp(f"{tool_name} called", **key_params)
+
+            start = _time.monotonic()
+            try:
+                result = func(*args, **kwargs)
+                elapsed_ms = round((_time.monotonic() - start) * 1000)
+
+                # Summarize result
+                if isinstance(result, list):
+                    cs_log.mcp(
+                        f"{tool_name} completed",
+                        results=len(result),
+                        latency_ms=elapsed_ms,
+                    )
+                elif isinstance(result, dict):
+                    cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
+                else:
+                    cs_log.mcp(f"{tool_name} completed", latency_ms=elapsed_ms)
+                return result
+            except Exception as e:
+                elapsed_ms = round((_time.monotonic() - start) * 1000)
+                cs_log.mcp(
+                    f"{tool_name} failed",
+                    level="ERROR",
+                    error=_truncate(str(e)),
+                    latency_ms=elapsed_ms,
+                )
+                raise
+
+        return wrapper
+
+
 @mcp.tool()
+@log_mcp_tool
 async def search_code(
     query: Annotated[str, Field(description="Natural language search query")],
     ctx: Context,
@@ -1630,10 +1858,7 @@ async def search_code(
                 ]
 
     # Initialize CocoIndex (required for embedding generation)
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return [
             {
                 "error": "Database not initialized",
@@ -1829,6 +2054,7 @@ async def search_code(
 
 
 @mcp.tool()
+@log_mcp_tool
 async def analyze_query(
     query: Annotated[str, Field(description="Search query to analyze")],
     ctx: Context,
@@ -1905,10 +2131,7 @@ async def analyze_query(
             }
 
     # Initialize CocoIndex
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return {
             "error": "Database not initialized",
             "message": "Index a codebase first using index_codebase(path='.')",
@@ -1935,6 +2158,7 @@ async def analyze_query(
 
 
 @mcp.tool()
+@log_mcp_tool
 def list_indexes() -> list[dict]:
     """List all available code indexes.
 
@@ -1948,6 +2172,7 @@ def list_indexes() -> list[dict]:
 
 
 @mcp.tool()
+@log_mcp_tool
 def index_stats(
     index_name: Annotated[
         str | None,
@@ -1984,6 +2209,7 @@ def index_stats(
 
 
 @mcp.tool()
+@log_mcp_tool
 def clear_index(
     index_name: Annotated[str, Field(description="Name of the index to delete")],
 ) -> dict:
@@ -2003,6 +2229,7 @@ def clear_index(
 
 
 @mcp.tool()
+@log_mcp_tool
 def index_codebase(
     path: Annotated[str, Field(description="Path to the codebase directory to index")],
     index_name: Annotated[
@@ -2097,6 +2324,7 @@ def index_codebase(
 
 
 @mcp.tool()
+@log_mcp_tool
 async def get_file_dependencies(
     file: Annotated[str, Field(description="File path relative to project root")],
     ctx: Context,
@@ -2163,6 +2391,7 @@ async def get_file_dependencies(
 
 
 @mcp.tool()
+@log_mcp_tool
 async def get_file_impact(
     file: Annotated[str, Field(description="File path relative to project root")],
     ctx: Context,
@@ -2258,17 +2487,38 @@ def run_server(
     # Start capturing logs for the dashboard log panel
     from cocosearch.mcp.log_stream import setup_log_capture
 
-    setup_log_capture()
+    log_file_enabled = os.environ.get("COCOSEARCH_LOG_FILE", "").lower() in (
+        "1",
+        "true",
+    )
+    try:
+        from cocosearch.config import find_config_file, load_config
+
+        cfg_path = find_config_file()
+        if cfg_path:
+            cfg = load_config(cfg_path)
+            if cfg.logging.file:
+                log_file_enabled = True
+    except Exception:
+        pass
+
+    setup_log_capture(log_file=log_file_enabled)
+
+    _get_cs_log().system("Server starting", transport=transport, host=host, port=port)
 
     # Dashboard auto-open (opt-out via COCOSEARCH_NO_DASHBOARD=1)
     no_dashboard = os.environ.get("COCOSEARCH_NO_DASHBOARD", "").strip() == "1"
 
     # Initialize CocoIndex before the event loop starts to avoid
-    # "sync API called inside existing event loop" RuntimeWarning
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex pre-init failed (will retry on demand): {e}")
+    # "sync API called inside existing event loop" RuntimeWarning.
+    # Uses a timeout so the server starts even if infrastructure is down.
+    if _ensure_cocoindex_init():
+        _get_cs_log().infra("CocoIndex initialized")
+    else:
+        _get_cs_log().infra(
+            "CocoIndex init skipped — infrastructure may be unavailable",
+            level="WARNING",
+        )
 
     if transport == "stdio":
         if port != 3000:  # Non-default port specified
@@ -2282,6 +2532,7 @@ def run_server(
             if dashboard_url:
                 _open_browser(dashboard_url)
 
+        _get_cs_log().system("Server listening", transport="stdio")
         mcp.run(transport="stdio")
     elif transport == "sse":
         # Suppress verbose per-request access logs from uvicorn
@@ -2296,6 +2547,9 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
+        _get_cs_log().system(
+            "Server listening", transport="sse", url=f"http://{host}:{port}"
+        )
         mcp.run(transport="sse")
     elif transport == "http":
         # Suppress verbose per-request access logs from uvicorn
@@ -2310,6 +2564,9 @@ def run_server(
             dashboard_url = f"http://127.0.0.1:{port}/dashboard"
             _open_browser(dashboard_url)
 
+        _get_cs_log().system(
+            "Server listening", transport="http", url=f"http://{host}:{port}"
+        )
         mcp.run(transport="streamable-http")
     else:
         # Should not reach here if CLI validates

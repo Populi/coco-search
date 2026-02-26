@@ -1,17 +1,46 @@
 """Tests for cocosearch.mcp.log_stream module."""
 
+import asyncio
 import io
 import logging
 import sys
 import threading
 
+import pytest
+
 from cocosearch.mcp.log_stream import (
     BufferHandler,
+    FileLogHandler,
     LogBuffer,
     LogEntry,
+    RichLogHandler,
     StderrCapture,
     _QUEUE_MAXSIZE,
 )
+
+
+# ---------------------------------------------------------------------------
+# LogEntry structure
+# ---------------------------------------------------------------------------
+
+
+class TestLogEntryStructure:
+    def test_log_entry_has_category_and_fields(self):
+        entry = LogEntry(
+            timestamp=1.0,
+            level="INFO",
+            category="search",
+            message="test",
+            fields={"query": "hello"},
+        )
+        assert entry.category == "search"
+        assert entry.fields == {"query": "hello"}
+
+    def test_log_entry_default_fields(self):
+        entry = LogEntry(
+            timestamp=1.0, level="INFO", category="system", message="test", fields={}
+        )
+        assert entry.fields == {}
 
 
 # ---------------------------------------------------------------------------
@@ -22,7 +51,9 @@ from cocosearch.mcp.log_stream import (
 class TestLogBuffer:
     def test_append_and_history(self):
         buf = LogBuffer(maxlen=10)
-        entry = LogEntry(timestamp=1.0, level="INFO", name="test", message="hello")
+        entry = LogEntry(
+            timestamp=1.0, level="INFO", category="system", message="hello", fields={}
+        )
         buf.append(entry)
         history = buf.get_history()
         assert len(history) == 1
@@ -32,7 +63,13 @@ class TestLogBuffer:
         buf = LogBuffer(maxlen=3)
         for i in range(5):
             buf.append(
-                LogEntry(timestamp=float(i), level="INFO", name="test", message=str(i))
+                LogEntry(
+                    timestamp=float(i),
+                    level="INFO",
+                    category="system",
+                    message=str(i),
+                    fields={},
+                )
             )
         history = buf.get_history()
         assert len(history) == 3
@@ -41,7 +78,9 @@ class TestLogBuffer:
     def test_subscribe_receives_entries(self):
         buf = LogBuffer()
         sub_id, q = buf.subscribe()
-        entry = LogEntry(timestamp=1.0, level="INFO", name="test", message="live")
+        entry = LogEntry(
+            timestamp=1.0, level="INFO", category="system", message="live", fields={}
+        )
         buf.append(entry)
         assert not q.empty()
         assert q.get_nowait() == entry
@@ -51,7 +90,15 @@ class TestLogBuffer:
         buf = LogBuffer()
         sub_id, q = buf.subscribe()
         buf.unsubscribe(sub_id)
-        buf.append(LogEntry(timestamp=1.0, level="INFO", name="test", message="after"))
+        buf.append(
+            LogEntry(
+                timestamp=1.0,
+                level="INFO",
+                category="system",
+                message="after",
+                fields={},
+            )
+        )
         assert q.empty()
 
     def test_full_queue_drops_subscriber(self):
@@ -60,11 +107,23 @@ class TestLogBuffer:
         # Fill the queue to capacity
         for i in range(_QUEUE_MAXSIZE):
             buf.append(
-                LogEntry(timestamp=float(i), level="INFO", name="test", message=str(i))
+                LogEntry(
+                    timestamp=float(i),
+                    level="INFO",
+                    category="system",
+                    message=str(i),
+                    fields={},
+                )
             )
         # Next append should drop the subscriber
         buf.append(
-            LogEntry(timestamp=999.0, level="INFO", name="test", message="overflow")
+            LogEntry(
+                timestamp=999.0,
+                level="INFO",
+                category="system",
+                message="overflow",
+                fields={},
+            )
         )
         # Subscriber should have been removed
         assert sub_id not in buf._subscribers
@@ -80,8 +139,9 @@ class TestLogBuffer:
                         LogEntry(
                             timestamp=float(start + i),
                             level="INFO",
-                            name="thread",
+                            category="system",
                             message=str(start + i),
+                            fields={},
                         )
                     )
             except Exception as e:
@@ -94,7 +154,7 @@ class TestLogBuffer:
             t.join()
 
         assert not errors
-        # All entries should have been added (maxlen=100, 200 written → last 100)
+        # All entries should have been added (maxlen=100, 200 written -> last 100)
         history = buf.get_history()
         assert len(history) == 100
 
@@ -102,7 +162,13 @@ class TestLogBuffer:
         buf = LogBuffer()
         id1, q1 = buf.subscribe()
         id2, q2 = buf.subscribe()
-        entry = LogEntry(timestamp=1.0, level="INFO", name="test", message="fan-out")
+        entry = LogEntry(
+            timestamp=1.0,
+            level="INFO",
+            category="system",
+            message="fan-out",
+            fields={},
+        )
         buf.append(entry)
         assert q1.get_nowait() == entry
         assert q2.get_nowait() == entry
@@ -111,10 +177,70 @@ class TestLogBuffer:
 
     def test_get_history_is_snapshot(self):
         buf = LogBuffer()
-        buf.append(LogEntry(timestamp=1.0, level="INFO", name="test", message="a"))
+        buf.append(
+            LogEntry(
+                timestamp=1.0, level="INFO", category="system", message="a", fields={}
+            )
+        )
         snapshot = buf.get_history()
-        buf.append(LogEntry(timestamp=2.0, level="INFO", name="test", message="b"))
+        buf.append(
+            LogEntry(
+                timestamp=2.0, level="INFO", category="system", message="b", fields={}
+            )
+        )
         assert len(snapshot) == 1  # snapshot unchanged
+
+    @pytest.mark.asyncio
+    async def test_subscribe_stores_event_loop(self):
+        """subscribe() captures the running event loop for thread-safe delivery."""
+        buf = LogBuffer()
+        sub_id, q = buf.subscribe()
+        loop, _ = buf._subscribers[sub_id]
+        assert loop is asyncio.get_running_loop()
+        buf.unsubscribe(sub_id)
+
+    def test_subscribe_no_loop_in_sync_context(self):
+        """subscribe() stores None for loop when no event loop is running."""
+        buf = LogBuffer()
+        sub_id, q = buf.subscribe()
+        loop, _ = buf._subscribers[sub_id]
+        assert loop is None
+        buf.unsubscribe(sub_id)
+
+    @pytest.mark.asyncio
+    async def test_full_queue_in_async_context_drops_entries_silently(self):
+        """QueueFull in async subscriber must not cascade via event loop callbacks."""
+        buf = LogBuffer()
+        sub_id, q = buf.subscribe()
+
+        for i in range(_QUEUE_MAXSIZE):
+            buf.append(
+                LogEntry(
+                    timestamp=float(i),
+                    level="INFO",
+                    category="system",
+                    message=str(i),
+                    fields={},
+                )
+            )
+
+        # Queue is full; more appends should not raise or cascade
+        for i in range(10):
+            buf.append(
+                LogEntry(
+                    timestamp=1000.0 + i,
+                    level="INFO",
+                    category="system",
+                    message=f"overflow-{i}",
+                    fields={},
+                )
+            )
+
+        await asyncio.sleep(0.05)  # Let scheduled callbacks execute
+
+        assert sub_id in buf._subscribers  # NOT removed (entries silently dropped)
+        assert q.qsize() == _QUEUE_MAXSIZE  # Queue still full, overflow dropped
+        buf.unsubscribe(sub_id)
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +268,7 @@ class TestBufferHandler:
         history = buf.get_history()
         assert len(history) == 1
         assert history[0].level == "WARNING"
-        assert history[0].name == "mylogger"
+        assert history[0].category == "system"
         assert history[0].message == "test warning"
 
     def test_captures_correct_level(self):
@@ -167,6 +293,50 @@ class TestBufferHandler:
         assert history[0].level == "DEBUG"
         assert history[1].level == "INFO"
         assert history[2].level == "ERROR"
+
+    def test_captures_custom_category(self):
+        buf = LogBuffer()
+        handler = BufferHandler(buf)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="search event",
+            args=(),
+            exc_info=None,
+        )
+        record.category = "search"  # type: ignore[attr-defined]
+        record.fields = {"query": "hello"}  # type: ignore[attr-defined]
+        handler.emit(record)
+
+        history = buf.get_history()
+        assert len(history) == 1
+        assert history[0].category == "search"
+        assert history[0].fields == {"query": "hello"}
+
+    def test_defaults_to_system_category(self):
+        buf = LogBuffer()
+        handler = BufferHandler(buf)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+
+        record = logging.LogRecord(
+            name="third_party",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="some message",
+            args=(),
+            exc_info=None,
+        )
+        handler.emit(record)
+
+        history = buf.get_history()
+        assert len(history) == 1
+        assert history[0].category == "system"
+        assert history[0].fields == {}
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +363,8 @@ class TestStderrCapture:
         assert len(history) == 2
         assert history[0].message == "line one"
         assert history[0].level == "STDERR"
+        assert history[0].category == "system"
+        assert history[0].fields == {}
         assert history[1].message == "line two"
 
     def test_buffers_partial_lines(self):
@@ -212,7 +384,7 @@ class TestStderrCapture:
         """fileno() should delegate to original stderr."""
         buf = LogBuffer()
         capture = StderrCapture(sys.stderr, buf)
-        # Should not raise — delegates to real stderr
+        # Should not raise -- delegates to real stderr
         assert capture.fileno() == sys.stderr.fileno()
 
     def test_delegates_flush(self):
@@ -242,13 +414,13 @@ class TestStderrCapture:
 
         capture.write("\n\nhello\n\n")
         history = buf.get_history()
-        # Only "hello" should be captured — empty strings are skipped
+        # Only "hello" should be captured -- empty strings are skipped
         assert len(history) == 1
         assert history[0].message == "hello"
 
 
 # ---------------------------------------------------------------------------
-# setup_log_capture — idempotency & stdout safety
+# setup_log_capture -- idempotency & stdout safety
 # ---------------------------------------------------------------------------
 
 
@@ -313,3 +485,137 @@ class TestSetupLogCapture:
             assert mod.get_log_buffer() is None
         finally:
             mod._log_buffer = old_buf
+
+
+# ---------------------------------------------------------------------------
+# RichLogHandler
+# ---------------------------------------------------------------------------
+
+
+class TestRichLogHandler:
+    def test_formats_entry(self, capsys):
+        handler = RichLogHandler()
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="INFO",
+            category="search",
+            message="Query received",
+            fields={"query": "hello", "results": 5},
+        )
+        handler.handle(entry)
+        captured = capsys.readouterr()
+        assert "search" in captured.err or "Query received" in captured.err
+
+    def test_formats_fields_inline(self, capsys):
+        handler = RichLogHandler()
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="WARNING",
+            category="infra",
+            message="Connection failed",
+            fields={"error": "timeout"},
+        )
+        handler.handle(entry)
+        captured = capsys.readouterr()
+        assert "timeout" in captured.err or "error" in captured.err
+
+    def test_custom_file_bypasses_stderr(self):
+        """RichLogHandler(file=...) writes to the given file, not stderr."""
+        import io
+
+        buf = io.StringIO()
+        handler = RichLogHandler(file=buf)
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="INFO",
+            category="search",
+            message="Custom output",
+            fields={},
+        )
+        handler.handle(entry)
+        output = buf.getvalue()
+        assert "Custom output" in output
+        assert "INFO" in output
+
+    def test_category_visible_in_rich_output(self):
+        """Category badge like [search] must appear as visible text."""
+        buf = io.StringIO()
+        handler = RichLogHandler(file=buf)
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="INFO",
+            category="search",
+            message="test",
+            fields={},
+        )
+        handler.handle(entry)
+        output = buf.getvalue()
+        assert "[search]" in output
+
+
+# ---------------------------------------------------------------------------
+# FileLogHandler
+# ---------------------------------------------------------------------------
+
+
+class TestFileLogHandler:
+    def test_writes_to_file(self, tmp_path):
+        log_file = tmp_path / "test.log"
+        handler = FileLogHandler(str(log_file))
+        entry = LogEntry(
+            timestamp=1740000000.0,
+            level="INFO",
+            category="search",
+            message="Test log",
+            fields={"key": "value"},
+        )
+        handler.handle(entry)
+        handler.close()
+        content = log_file.read_text()
+        assert "Test log" in content
+        assert "search" in content
+        assert "key=value" in content
+
+    def test_rotation_config(self, tmp_path):
+        log_file = tmp_path / "test.log"
+        handler = FileLogHandler(str(log_file), max_bytes=1024, backup_count=2)
+        assert handler._max_bytes == 1024
+        assert handler._backup_count == 2
+        handler.close()
+
+
+# ---------------------------------------------------------------------------
+# LogBuffer handler integration
+# ---------------------------------------------------------------------------
+
+
+class TestLogBufferHandlers:
+    def test_add_handler_called_on_append(self):
+        buf = LogBuffer()
+        calls = []
+
+        class MockHandler:
+            def handle(self, entry):
+                calls.append(entry)
+
+        buf.add_handler(MockHandler())
+        entry = LogEntry(
+            timestamp=1.0, level="INFO", category="search", message="test", fields={}
+        )
+        buf.append(entry)
+        assert len(calls) == 1
+        assert calls[0] == entry
+
+    def test_handler_exception_does_not_break_append(self):
+        buf = LogBuffer()
+
+        class BadHandler:
+            def handle(self, entry):
+                raise RuntimeError("broken")
+
+        buf.add_handler(BadHandler())
+        entry = LogEntry(
+            timestamp=1.0, level="INFO", category="system", message="test", fields={}
+        )
+        buf.append(entry)  # Should not raise
+        assert len(buf.get_history()) == 1

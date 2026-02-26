@@ -192,7 +192,7 @@ class TestApiAnalyze:
 
         with patch(
             "cocosearch.mcp.server._ensure_cocoindex_init",
-            side_effect=Exception("DB not ready"),
+            return_value=False,
         ):
             response = await api_analyze(request)
 
@@ -1246,7 +1246,7 @@ class TestApiProjects:
         with patch.dict("os.environ", {"COCOSEARCH_PROJECTS_DIR": str(tmp_path)}):
             with patch(
                 "cocosearch.mcp.server._ensure_cocoindex_init",
-                side_effect=Exception("DB down"),
+                return_value=False,
             ):
                 response = await api_projects(request)
 
