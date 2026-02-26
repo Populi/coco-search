@@ -706,10 +706,11 @@ class TestEmptyDatabase:
                 limit=5,
             )
 
-        # _ensure_cocoindex_init now catches the exception and returns False,
-        # so search proceeds normally (which may return empty or error
-        # depending on downstream behavior)
+        # _ensure_cocoindex_init returns False, so search_code returns early
+        # with a "Database not initialized" error dict
         assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["error"] == "Database not initialized"
 
 
 class TestMCPToolRegistration:

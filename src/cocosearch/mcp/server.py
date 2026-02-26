@@ -986,10 +986,7 @@ async def api_analyze(request) -> JSONResponse:
     symbol_name = body.get("symbol_name") or None
     no_cache = body.get("no_cache", True)
 
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return JSONResponse(
             {"error": "Database not initialized. Index a codebase first."},
             status_code=503,
@@ -1113,10 +1110,7 @@ async def api_search(request) -> JSONResponse:
     context_before = body.get("context_before")
     context_after = body.get("context_after")
 
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return JSONResponse(
             {"error": "Database not initialized. Index a codebase first."},
             status_code=503,
@@ -1864,10 +1858,7 @@ async def search_code(
                 ]
 
     # Initialize CocoIndex (required for embedding generation)
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return [
             {
                 "error": "Database not initialized",
@@ -2140,10 +2131,7 @@ async def analyze_query(
             }
 
     # Initialize CocoIndex
-    try:
-        _ensure_cocoindex_init()
-    except Exception as e:
-        logger.warning(f"CocoIndex init failed: {e}")
+    if not _ensure_cocoindex_init():
         return {
             "error": "Database not initialized",
             "message": "Index a codebase first using index_codebase(path='.')",
