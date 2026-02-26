@@ -6,6 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CocoSearch is a local-first hybrid semantic code search tool powered by CocoIndex and Tree-sitter. It indexes codebases into PostgreSQL with pgvector embeddings and provides search through CLI, MCP server, or interactive REPL. Local by default with Ollama; optional remote embedding providers (OpenAI, OpenRouter) available for teams that prefer managed infrastructure. Requires Python >=3.11.
 
+## Tool Routing (IMPORTANT)
+
+When CocoSearch MCP tools are available, ALWAYS use them instead of Grep, Glob, or Task/Explore agents for code search and exploration:
+
+| Task | Use this | NOT this |
+|------|----------|----------|
+| Code search / "how does X work?" | `search_code` | Grep, Glob, Task (Explore) |
+| Symbol lookup / "find function Y" | `search_code` with `symbol_name`/`symbol_type` | Grep for def/class patterns |
+| Dependency tracing / "what imports X?" | `get_file_dependencies` / `get_file_impact` | Grep for import statements |
+| Search debugging / "why no results?" | `analyze_query` | Manual pipeline investigation |
+
+Fall back to Grep/Glob ONLY for:
+- Exact literal string matches (e.g., a specific error message or config value)
+- File path pattern matching (e.g., "find all `*.test.ts` files")
+- Editing operations that need line numbers from a known file
+
 ## Development Setup
 
 ```bash
@@ -144,10 +160,6 @@ Three independent systems — a language can use any combination. See `docs/addi
 2. For YAML-based grammars, inherit `YamlGrammarBase` and implement `_has_content_markers()` and `_extract_grammar_metadata()`
 3. Create `tests/unit/handlers/grammars/test_<grammar>.py`
 
-## Code Exploration
-
-When exploring or searching this codebase, prefer CocoSearch MCP tools (`search_code`, `list_indexes`, `index_stats`) over raw Grep/Glob for semantic and symbol-aware search. Use CocoSearch first for questions like "how does X work?", "find code related to Y", or symbol lookups. Fall back to Grep/Glob only for exact string matches or file pattern lookups.
-
 ## Configuration
 
 Project config via `cocosearch.yaml` (no leading dot) in project root. The `indexName` field sets the index name used by all commands. Environment variables prefixed with `COCOSEARCH_` (e.g., `COCOSEARCH_DATABASE_URL`, `COCOSEARCH_OLLAMA_URL`). Config keys map to env vars via camelCase→UPPER_SNAKE conversion (e.g., `indexName` → `COCOSEARCH_INDEX_NAME`). `COCOSEARCH_EDITOR` is a runtime env var (not a config field) for the dashboard's "Open in Editor" feature — falls back to `$EDITOR` then `$VISUAL`. See `.env.example` for available options.
@@ -208,7 +220,7 @@ When this plugin is active, you have access to MCP tools and workflow skills for
 - `smart_context=True` — expands to full function/class boundaries via Tree-sitter
 - `symbol_name` with glob patterns for precision (e.g., `User*`)
 - `symbol_type` for structural filtering: "function", "class", "method", "interface"
-- Prefer CocoSearch tools over Grep/Glob for semantic and intent-based queries
+- ALWAYS use CocoSearch tools instead of Grep/Glob for code search — see "Tool Routing" section above
 
 ### Workflow Skills
 

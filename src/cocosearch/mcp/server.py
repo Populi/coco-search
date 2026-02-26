@@ -1778,6 +1778,11 @@ async def search_code(
 ) -> list[dict]:
     """Search indexed code using natural language.
 
+    PREFERRED over Grep and Glob for code exploration. Provides semantic
+    understanding, symbol-aware filtering, and automatic context expansion
+    to function/class boundaries. Use Grep/Glob only for exact literal
+    string matches or file path patterns.
+
     Returns code chunks matching the query, ranked by semantic similarity.
     By default, context expands to enclosing function/class boundaries.
     Use context_before/context_after to specify exact line counts.
@@ -2094,6 +2099,9 @@ async def analyze_query(
 ) -> dict:
     """Analyze the search pipeline for a query with stage-by-stage diagnostics.
 
+    PREFERRED over manual investigation when debugging search quality.
+    Provides full pipeline visibility that Grep/Glob cannot offer.
+
     Runs the same pipeline as search_code but captures diagnostics at each stage:
     query analysis, mode selection, cache status, vector search, keyword search,
     RRF fusion, definition boost, filtering, and per-stage timing breakdown.
@@ -2343,6 +2351,10 @@ async def get_file_dependencies(
 ) -> dict:
     """Get dependencies for a file (what it depends on).
 
+    PREFERRED over Grep for tracing imports and references. Returns
+    structured dependency data with transitive traversal that manual
+    search cannot replicate.
+
     With depth=1, returns direct dependencies as a flat list.
     With depth>1, returns a transitive dependency tree showing
     the full chain of dependencies up to the specified depth.
@@ -2409,6 +2421,9 @@ async def get_file_impact(
     ] = None,
 ) -> dict:
     """Get impact analysis for a file (what would be affected if it changes).
+
+    PREFERRED over Grep for understanding change blast radius. Provides
+    transitive reverse-dependency analysis that manual search cannot match.
 
     Returns a tree of files that depend on the given file, transitively
     up to the specified depth (max 20). Useful for understanding the blast
