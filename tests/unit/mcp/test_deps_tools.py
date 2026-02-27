@@ -286,3 +286,204 @@ class TestGetFileImpactTool:
 
         assert result["file"] == "utils.py"
         assert "impact_tree" in result
+
+
+# ============================================================================
+# Tests: MCP tool get_batch_dependencies
+# ============================================================================
+
+
+class TestGetBatchDependenciesTool:
+    """Tests for the get_batch_dependencies MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_direct_dependencies(self):
+        """depth=1 returns flat dependency lists per file."""
+        edges_a = [
+            DependencyEdge(
+                source_file="a.py",
+                source_symbol=None,
+                target_file="b.py",
+                target_symbol="helper",
+                dep_type=DepType.IMPORT,
+                metadata={"module": "b"},
+            )
+        ]
+        edges_c = [
+            DependencyEdge(
+                source_file="c.py",
+                source_symbol=None,
+                target_file="d.py",
+                target_symbol=None,
+                dep_type=DepType.IMPORT,
+                metadata={"module": "d"},
+            )
+        ]
+
+        def mock_get_deps(index_name, file, dep_type=None):
+            return {"a.py": edges_a, "c.py": edges_c}.get(file, [])
+
+        with patch("cocosearch.deps.query.get_dependencies", side_effect=mock_get_deps):
+            from cocosearch.mcp.server import get_batch_dependencies
+
+            ctx = MagicMock()
+            result = await get_batch_dependencies(
+                files=["a.py", "c.py"], ctx=ctx, index_name="test", depth=1
+            )
+
+        assert result["files_requested"] == 2
+        assert result["depth"] == 1
+        assert len(result["results"]) == 2
+        assert result["results"][0]["file"] == "a.py"
+        assert result["results"][0]["total"] == 1
+        assert result["results"][0]["dependencies"][0]["target_file"] == "b.py"
+        assert result["results"][1]["file"] == "c.py"
+        assert result["results"][1]["total"] == 1
+
+    @pytest.mark.asyncio
+    async def test_transitive_dependencies(self):
+        """depth>1 returns dependency trees per file."""
+        trees = [
+            DependencyTree(
+                file="a.py",
+                symbol=None,
+                dep_type="root",
+                children=[
+                    DependencyTree(
+                        file="b.py",
+                        symbol=None,
+                        dep_type="import",
+                        children=[],
+                    )
+                ],
+            ),
+            DependencyTree(file="c.py", symbol=None, dep_type="root", children=[]),
+        ]
+
+        with patch(
+            "cocosearch.deps.query.get_dependency_tree_batch", return_value=trees
+        ):
+            from cocosearch.mcp.server import get_batch_dependencies
+
+            ctx = MagicMock()
+            result = await get_batch_dependencies(
+                files=["a.py", "c.py"], ctx=ctx, index_name="test", depth=3
+            )
+
+        assert result["files_requested"] == 2
+        assert result["depth"] == 3
+        assert len(result["results"]) == 2
+        assert result["results"][0]["file"] == "a.py"
+        assert "tree" in result["results"][0]
+        assert result["results"][1]["file"] == "c.py"
+
+    @pytest.mark.asyncio
+    async def test_empty_files_list(self):
+        """Empty files list returns empty results."""
+        from cocosearch.mcp.server import get_batch_dependencies
+
+        ctx = MagicMock()
+        result = await get_batch_dependencies(
+            files=[], ctx=ctx, index_name="test", depth=1
+        )
+
+        assert result["files_requested"] == 0
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_depth_capped_at_20(self):
+        """Depth is capped at 20 even if a higher value is passed."""
+        trees = [DependencyTree(file="a.py", symbol=None, dep_type="root", children=[])]
+
+        with patch(
+            "cocosearch.deps.query.get_dependency_tree_batch", return_value=trees
+        ) as mock_batch:
+            from cocosearch.mcp.server import get_batch_dependencies
+
+            ctx = MagicMock()
+            result = await get_batch_dependencies(
+                files=["a.py"], ctx=ctx, index_name="test", depth=50
+            )
+
+        mock_batch.assert_called_once_with(
+            "test", ["a.py"], max_depth=20, dep_type=None
+        )
+        assert result["depth"] == 20
+
+
+# ============================================================================
+# Tests: MCP tool get_batch_impact
+# ============================================================================
+
+
+class TestGetBatchImpactTool:
+    """Tests for the get_batch_impact MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_impact_trees(self):
+        """Returns impact trees per file."""
+        trees = [
+            DependencyTree(
+                file="utils.py",
+                symbol=None,
+                dep_type="root",
+                children=[
+                    DependencyTree(
+                        file="main.py",
+                        symbol=None,
+                        dep_type="import",
+                        children=[],
+                    )
+                ],
+            ),
+            DependencyTree(file="config.py", symbol=None, dep_type="root", children=[]),
+        ]
+
+        with patch("cocosearch.deps.query.get_impact_batch", return_value=trees):
+            from cocosearch.mcp.server import get_batch_impact
+
+            ctx = MagicMock()
+            result = await get_batch_impact(
+                files=["utils.py", "config.py"], ctx=ctx, index_name="test", depth=3
+            )
+
+        assert result["files_requested"] == 2
+        assert result["depth"] == 3
+        assert len(result["results"]) == 2
+        assert result["results"][0]["file"] == "utils.py"
+        assert "impact_tree" in result["results"][0]
+        assert result["results"][1]["file"] == "config.py"
+
+    @pytest.mark.asyncio
+    async def test_empty_files_list(self):
+        """Empty files list returns empty results."""
+        with patch("cocosearch.deps.query.get_impact_batch", return_value=[]):
+            from cocosearch.mcp.server import get_batch_impact
+
+            ctx = MagicMock()
+            result = await get_batch_impact(
+                files=[], ctx=ctx, index_name="test", depth=3
+            )
+
+        assert result["files_requested"] == 0
+        assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_depth_capped_at_20(self):
+        """Depth is capped at 20 even if a higher value is passed."""
+        trees = [DependencyTree(file="a.py", symbol=None, dep_type="root", children=[])]
+
+        with patch(
+            "cocosearch.deps.query.get_impact_batch", return_value=trees
+        ) as mock_batch:
+            from cocosearch.mcp.server import get_batch_impact
+
+            ctx = MagicMock()
+            result = await get_batch_impact(
+                files=["a.py"], ctx=ctx, index_name="test", depth=50
+            )
+
+        mock_batch.assert_called_once_with(
+            "test", ["a.py"], max_depth=20, dep_type=None
+        )
+        assert result["depth"] == 20
