@@ -317,14 +317,14 @@ def extract_dependencies(
         _get_cs_log().deps(
             "Dependency extraction completed (full)",
             files_processed=files_processed,
-            edges=edges_found,
+            edges=len(all_edges),
             errors=errors,
         )
 
         return {
             "files_processed": files_processed,
             "files_skipped": files_skipped,
-            "edges_found": edges_found,
+            "edges_found": len(all_edges),
             "errors": errors,
             "incremental": False,
             "files_unchanged": 0,

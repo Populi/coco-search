@@ -65,7 +65,7 @@ def create_deps_table(index_name: str) -> None:
 
         conn.commit()
 
-    logger.info("Created deps table %s", table_name)
+    logger.debug("Created deps table %s", table_name)
 
 
 def drop_deps_table(index_name: str) -> None:
@@ -125,7 +125,7 @@ def insert_edges(index_name: str, edges: list[DependencyEdge]) -> None:
 
         conn.commit()
 
-    logger.info("Inserted %d edges into %s", len(edges), table_name)
+    logger.debug("Inserted %d edges into %s", len(edges), table_name)
 
 
 def truncate_deps_table(index_name: str) -> None:
@@ -143,7 +143,7 @@ def truncate_deps_table(index_name: str) -> None:
 
         conn.commit()
 
-    logger.info("Truncated deps table %s", table_name)
+    logger.debug("Truncated deps table %s", table_name)
 
 
 def read_edges_excluding(
@@ -223,7 +223,7 @@ def create_tracking_table(index_name: str) -> None:
 
         conn.commit()
 
-    logger.info("Created tracking table %s", table_name)
+    logger.debug("Created tracking table %s", table_name)
 
 
 def drop_tracking_table(index_name: str) -> None:
@@ -292,6 +292,6 @@ def update_tracking(index_name: str, file_hashes: dict[str, tuple[str, str]]) ->
 
         conn.commit()
 
-    logger.info(
+    logger.debug(
         "Updated tracking table %s with %d entries", table_name, len(file_hashes)
     )
