@@ -147,11 +147,11 @@ class TestExtractDependencies:
 
     def test_skips_files_without_registered_extractor(self, mock_db_pool, tmp_path):
         """Files with no registered extractor should be skipped."""
-        # Create a markdown file (no extractor for "md")
-        md_file = tmp_path / "README.md"
-        md_file.write_text("# Hello")
+        # Create a CSS file (no extractor for "css")
+        css_file = tmp_path / "styles.css"
+        css_file.write_text("body { color: red; }")
 
-        indexed_files = [("README.md", "md")]
+        indexed_files = [("styles.css", "css")]
 
         with (
             patch(
@@ -220,7 +220,7 @@ class TestExtractDependencies:
 
         indexed_files = [
             ("app.py", "py"),  # valid
-            ("README.md", "md"),  # no extractor -> skipped
+            ("styles.css", "css"),  # no extractor -> skipped
             ("missing.py", "py"),  # missing -> error
         ]
 

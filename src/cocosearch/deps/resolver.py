@@ -10,6 +10,9 @@ import conventions, so each resolver encapsulates language-specific logic:
   (``*.js``, ``*.ts``, ``*/index.*``).  Bare specifiers are external.
 - **GoResolver** — full import paths; matches internal packages by
   directory structure.  External packages are unresolvable.
+- **MarkdownResolver** — resolves documentation references to source files.
+  Handles relative paths (``../src/cli.py``) and project-relative paths.
+  Supports both file and directory references.
 
 The orchestrator in ``extractor.py`` calls :func:`get_resolvers` to obtain
 all registered resolvers, then dispatches edges by language.
@@ -363,6 +366,74 @@ class TerraformResolver:
 
 
 # ============================================================================
+# Markdown resolver
+# ============================================================================
+
+
+class MarkdownResolver:
+    """Resolve Markdown documentation references to file paths.
+
+    Handles relative paths (``../src/cli.py`` from ``docs/guide.md``)
+    and project-relative paths (``src/cli.py``).  Supports both file-level
+    and directory-level references.
+    """
+
+    def build_index(self, indexed_files: list[tuple[str, str]]) -> dict[str, str]:
+        index: dict[str, str] = {}
+
+        for filepath, _language_id in indexed_files:
+            filepath_posix = filepath.replace("\\", "/")
+            # Map each file path to itself
+            index[filepath_posix] = filepath
+
+            # Also map directory prefixes to a representative file
+            dir_path = str(PurePosixPath(filepath_posix).parent)
+            if dir_path != "." and dir_path not in index:
+                index[dir_path] = filepath
+                index[dir_path + "/"] = filepath
+
+        return index
+
+    def resolve(self, edge: DependencyEdge, module_index: dict[str, str]) -> str | None:
+        module = edge.metadata.get("module")
+        if not module:
+            return None
+
+        # Normalise: strip trailing / for lookup (we try both)
+        module_stripped = module.rstrip("/")
+
+        # Relative paths: normalise against source file's directory
+        if module.startswith("./") or module.startswith("../"):
+            source_posix = edge.source_file.replace("\\", "/")
+            source_dir = str(PurePosixPath(source_posix).parent)
+
+            if source_dir == ".":
+                candidate = module_stripped
+            else:
+                candidate = os.path.normpath(f"{source_dir}/{module_stripped}").replace(
+                    "\\", "/"
+                )
+
+            # Strip leading ./
+            if candidate.startswith("./"):
+                candidate = candidate[2:]
+
+            if candidate in module_index:
+                return module_index[candidate]
+            if candidate + "/" in module_index:
+                return module_index[candidate + "/"]
+            return None
+
+        # Project-relative paths: direct lookup
+        if module_stripped in module_index:
+            return module_index[module_stripped]
+        if module_stripped + "/" in module_index:
+            return module_index[module_stripped + "/"]
+
+        return None
+
+
+# ============================================================================
 # Registry
 # ============================================================================
 
@@ -386,6 +457,10 @@ def _build_resolver_registry() -> dict[str, ModuleResolver]:
 
     tf = TerraformResolver()
     registry["terraform"] = tf
+
+    md = MarkdownResolver()
+    registry["md"] = md
+    registry["mdx"] = md
 
     return registry
 

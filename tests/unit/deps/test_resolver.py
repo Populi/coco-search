@@ -4,6 +4,7 @@ from cocosearch.deps.models import DependencyEdge, DepType
 from cocosearch.deps.resolver import (
     GoResolver,
     JavaScriptResolver,
+    MarkdownResolver,
     PythonResolver,
     TerraformResolver,
     get_resolver,
@@ -357,6 +358,14 @@ class TestResolverRegistry:
     def test_terraform_resolver_registered(self):
         assert isinstance(get_resolver("terraform"), TerraformResolver)
 
+    def test_markdown_resolver_registered(self):
+        assert isinstance(get_resolver("md"), MarkdownResolver)
+        assert isinstance(get_resolver("mdx"), MarkdownResolver)
+
+    def test_md_variants_share_instance(self):
+        resolvers = get_resolvers()
+        assert resolvers["md"] is resolvers["mdx"]
+
 
 # ============================================================================
 # Helpers: Terraform edges
@@ -453,3 +462,121 @@ class TestTerraformResolverResolve:
         resolver = TerraformResolver()
         edge = _make_tf_edge("main.tf", "./nonexistent")
         assert resolver.resolve(edge, {}) is None
+
+
+# ============================================================================
+# Helpers: Markdown edges
+# ============================================================================
+
+
+def _make_md_edge(source_file, module, target_file=None):
+    return DependencyEdge(
+        source_file=source_file,
+        source_symbol=None,
+        target_file=target_file,
+        target_symbol=None,
+        dep_type=DepType.REFERENCE,
+        metadata={"kind": "doc_link", "module": module, "line": 1},
+    )
+
+
+# ============================================================================
+# Tests: MarkdownResolver.build_index
+# ============================================================================
+
+
+class TestMarkdownResolverBuildIndex:
+    """Tests for MarkdownResolver.build_index()."""
+
+    def test_indexes_all_file_types(self):
+        resolver = MarkdownResolver()
+        files = [
+            ("src/cli.py", "py"),
+            ("src/search/engine.py", "py"),
+            ("docs/guide.md", "md"),
+        ]
+        index = resolver.build_index(files)
+
+        assert "src/cli.py" in index
+        assert "src/search/engine.py" in index
+        assert "docs/guide.md" in index
+
+    def test_indexes_directories(self):
+        resolver = MarkdownResolver()
+        files = [("src/search/engine.py", "py")]
+        index = resolver.build_index(files)
+
+        assert "src/search" in index
+        assert "src/search/" in index
+
+    def test_first_file_wins_per_directory(self):
+        resolver = MarkdownResolver()
+        files = [
+            ("src/search/engine.py", "py"),
+            ("src/search/cache.py", "py"),
+        ]
+        index = resolver.build_index(files)
+
+        assert index["src/search"] == "src/search/engine.py"
+
+
+# ============================================================================
+# Tests: MarkdownResolver.resolve
+# ============================================================================
+
+
+class TestMarkdownResolverResolve:
+    """Tests for MarkdownResolver.resolve()."""
+
+    def test_resolves_project_relative_path(self):
+        resolver = MarkdownResolver()
+        module_index = {"src/cli.py": "src/cli.py"}
+        edge = _make_md_edge("docs/guide.md", "src/cli.py")
+        assert resolver.resolve(edge, module_index) == "src/cli.py"
+
+    def test_resolves_relative_path_parent(self):
+        resolver = MarkdownResolver()
+        module_index = {"src/cli.py": "src/cli.py"}
+        edge = _make_md_edge("docs/guide.md", "../src/cli.py")
+        assert resolver.resolve(edge, module_index) == "src/cli.py"
+
+    def test_resolves_dot_relative_path(self):
+        resolver = MarkdownResolver()
+        module_index = {"docs/other.md": "docs/other.md"}
+        edge = _make_md_edge("docs/guide.md", "./other.md")
+        assert resolver.resolve(edge, module_index) == "docs/other.md"
+
+    def test_resolves_directory_reference(self):
+        resolver = MarkdownResolver()
+        module_index = {
+            "src/search": "src/search/engine.py",
+            "src/search/": "src/search/engine.py",
+        }
+        edge = _make_md_edge("docs/guide.md", "src/search/")
+        assert resolver.resolve(edge, module_index) == "src/search/engine.py"
+
+    def test_unresolvable_path_returns_none(self):
+        resolver = MarkdownResolver()
+        edge = _make_md_edge("docs/guide.md", "nonexistent/file.py")
+        assert resolver.resolve(edge, {}) is None
+
+    def test_no_module_in_metadata_returns_none(self):
+        resolver = MarkdownResolver()
+        edge = DependencyEdge(
+            source_file="docs/guide.md",
+            source_symbol=None,
+            target_file=None,
+            target_symbol=None,
+            dep_type=DepType.REFERENCE,
+            metadata={"kind": "doc_link", "line": 1},
+        )
+        assert resolver.resolve(edge, {}) is None
+
+    def test_resolves_directory_without_trailing_slash(self):
+        resolver = MarkdownResolver()
+        module_index = {
+            "src/search": "src/search/engine.py",
+            "src/search/": "src/search/engine.py",
+        }
+        edge = _make_md_edge("docs/guide.md", "src/search")
+        assert resolver.resolve(edge, module_index) == "src/search/engine.py"
