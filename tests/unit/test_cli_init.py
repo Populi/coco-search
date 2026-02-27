@@ -5,12 +5,17 @@ import json
 from unittest.mock import patch
 
 from cocosearch.cli import init_command
-from cocosearch.config import CLAUDE_MD_DUPLICATE_MARKER
+from cocosearch.config import CLAUDE_MD_DUPLICATE_MARKER, ConfigError as ConfigLoadError
 
 
 def _make_args(**kwargs):
     """Create args namespace with all optional prompts skipped by default."""
-    defaults = {"no_claude_md": True, "no_agents_md": True, "no_opencode_mcp": True}
+    defaults = {
+        "no_claude_md": True,
+        "no_agents_md": True,
+        "no_opencode_mcp": True,
+        "no_claude_mcp": True,
+    }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
@@ -539,3 +544,154 @@ def test_all_three_prompts_together(tmp_path, monkeypatch):
     assert (tmp_path / "CLAUDE.md").exists()
     assert (tmp_path / "AGENTS.md").exists()
     assert (tmp_path / "opencode.json").exists()
+
+
+# --- Claude Code plugin registration tests ---
+
+
+def test_skips_claude_mcp_prompt_with_flag(tmp_path, monkeypatch):
+    """Test that --no-claude-mcp skips the Claude plugin prompt."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=True)
+
+    with patch("builtins.input") as mock_input:
+        result = init_command(args)
+
+    assert result == 0
+    mock_input.assert_not_called()
+
+
+def test_user_accepts_claude_plugin_install(tmp_path, monkeypatch, capsys):
+    """Test that user accepting installs the Claude plugin."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", return_value="y"):
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=False
+            ):
+                with patch(
+                    "cocosearch.cli.install_claude_plugin", return_value="installed"
+                ):
+                    result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Installed CocoSearch plugin" in captured.out
+
+
+def test_user_declines_claude_plugin(tmp_path, monkeypatch, capsys):
+    """Test that user declining 'n' skips Claude plugin installation."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", return_value="n"):
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=False
+            ):
+                with patch("cocosearch.cli.install_claude_plugin") as mock_install:
+                    result = init_command(args)
+
+    assert result == 0
+    mock_install.assert_not_called()
+
+
+def test_claude_plugin_already_installed_skips(tmp_path, monkeypatch, capsys):
+    """Test that already-installed plugin shows dim message without prompting."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input") as mock_input:
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=True
+            ):
+                result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "already installed" in captured.out
+    mock_input.assert_not_called()
+
+
+def test_claude_cli_not_found_warns(tmp_path, monkeypatch, capsys):
+    """Test that missing claude CLI prints a warning, not a failure."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", return_value="y"):
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=False
+            ):
+                with patch(
+                    "cocosearch.cli.install_claude_plugin",
+                    side_effect=ConfigLoadError("Claude CLI not found"),
+                ):
+                    result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out
+    assert "Claude CLI not found" in captured.out
+
+
+def test_claude_plugin_timeout_warns(tmp_path, monkeypatch, capsys):
+    """Test that subprocess timeout prints a warning, not a failure."""
+    import subprocess
+
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_mcp=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", return_value="y"):
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=False
+            ):
+                with patch(
+                    "cocosearch.cli.install_claude_plugin",
+                    side_effect=subprocess.TimeoutExpired("claude", 60),
+                ):
+                    result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out
+    assert "timed out" in captured.out
+
+
+def test_all_four_prompts_together(tmp_path, monkeypatch, capsys):
+    """Test that all four prompts (CLAUDE.md, AGENTS.md, OpenCode MCP, Claude plugin) work together."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(
+        no_claude_md=False,
+        no_agents_md=False,
+        no_opencode_mcp=False,
+        no_claude_mcp=False,
+    )
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        # CLAUDE.md (y, 1), AGENTS.md (y, 1), OpenCode MCP (y, 1), Claude plugin (y)
+        with patch("builtins.input", side_effect=["y", "1", "y", "1", "y", "1", "y"]):
+            with patch(
+                "cocosearch.cli.check_claude_plugin_installed", return_value=False
+            ):
+                with patch(
+                    "cocosearch.cli.install_claude_plugin", return_value="installed"
+                ):
+                    result = init_command(args)
+
+    assert result == 0
+    assert (tmp_path / "CLAUDE.md").exists()
+    assert (tmp_path / "AGENTS.md").exists()
+    assert (tmp_path / "opencode.json").exists()
+    captured = capsys.readouterr()
+    assert "Installed CocoSearch plugin" in captured.out

@@ -1,6 +1,7 @@
 """Configuration file generator for CocoSearch."""
 
 import json
+import subprocess
 from pathlib import Path
 
 from .schema import ConfigError
@@ -203,3 +204,80 @@ def generate_opencode_mcp_config(path: Path) -> str:
     }
     path.write_text(json.dumps(config, indent=2) + "\n")
     return "created"
+
+
+CLAUDE_PLUGIN_ID = "cocosearch@cocosearch"
+CLAUDE_MARKETPLACE_REPO = "VioletCranberry/coco-search"
+
+
+def check_claude_plugin_installed() -> bool:
+    """Check if the CocoSearch plugin is installed in Claude Code.
+
+    Reads ~/.claude/plugins/installed_plugins.json and checks for the
+    'cocosearch@cocosearch' key in the plugins dict.
+
+    Returns:
+        True if the plugin is installed, False otherwise.
+    """
+    plugins_file = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(plugins_file.read_text())
+        plugins = data.get("plugins", {})
+        return CLAUDE_PLUGIN_ID in plugins
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, AttributeError):
+        return False
+
+
+def install_claude_plugin() -> str:
+    """Install the CocoSearch plugin for Claude Code via the claude CLI.
+
+    Runs two commands sequentially:
+    1. claude plugin marketplace add VioletCranberry/coco-search
+    2. claude plugin install cocosearch@cocosearch
+
+    Returns:
+        "installed" if the plugin was successfully installed,
+        "skipped" if the plugin is already installed.
+
+    Raises:
+        ConfigError: If the claude CLI is not found or a command fails.
+    """
+    if check_claude_plugin_installed():
+        return "skipped"
+
+    try:
+        # Step 1: Register the marketplace
+        result = subprocess.run(
+            ["claude", "plugin", "marketplace", "add", CLAUDE_MARKETPLACE_REPO],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            raise ConfigError(
+                f"Failed to add marketplace: {stderr or result.stdout.strip()}"
+            )
+
+        # Step 2: Install the plugin
+        result = subprocess.run(
+            ["claude", "plugin", "install", CLAUDE_PLUGIN_ID],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            raise ConfigError(
+                f"Failed to install plugin: {stderr or result.stdout.strip()}"
+            )
+
+    except FileNotFoundError:
+        raise ConfigError(
+            "Claude CLI not found. Install it from https://claude.ai/download "
+            "or install the plugin manually: "
+            "claude plugin marketplace add VioletCranberry/coco-search && "
+            "claude plugin install cocosearch@cocosearch"
+        )
+
+    return "installed"

@@ -1,6 +1,8 @@
 """Tests for config generator module."""
 
 import json
+import subprocess
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -10,10 +12,12 @@ from cocosearch.config import (
     CLAUDE_MD_ROUTING_SECTION,
     CONFIG_TEMPLATE,
     ConfigError,
+    check_claude_plugin_installed,
     generate_agents_md_routing,
     generate_claude_md_routing,
     generate_config,
     generate_opencode_mcp_config,
+    install_claude_plugin,
 )
 
 
@@ -285,3 +289,209 @@ class TestOpencodeMcpConfig:
         command = config["mcp"]["cocosearch"]["command"]
         assert "--project-from-cwd" in command
         assert "uvx" == command[0]
+
+
+class TestClaudePluginDetection:
+    """Tests for check_claude_plugin_installed."""
+
+    def test_not_installed_when_file_missing(self, tmp_path):
+        """Test that missing plugins file returns False."""
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+    def test_not_installed_when_key_missing(self, tmp_path):
+        """Test that file without cocosearch key returns False."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "plugins": {"other-plugin@marketplace": {"version": "1.0.0"}},
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+    def test_installed_when_key_present(self, tmp_path):
+        """Test that file with cocosearch key returns True."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "plugins": {"cocosearch@cocosearch": {"version": "0.5.0"}},
+                }
+            )
+        )
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is True
+
+    def test_handles_invalid_json(self, tmp_path):
+        """Test that malformed JSON returns False without raising."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text("{ not valid json }")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+    def test_handles_empty_file(self, tmp_path):
+        """Test that empty file returns False without raising."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text("")
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+    def test_handles_non_dict_json(self, tmp_path):
+        """Test that non-dict JSON returns False without raising."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text('"just a string"')
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+    def test_handles_missing_plugins_key(self, tmp_path):
+        """Test that JSON without 'plugins' key returns False."""
+        plugins_dir = tmp_path / ".claude" / "plugins"
+        plugins_dir.mkdir(parents=True)
+        plugins_file = plugins_dir / "installed_plugins.json"
+        plugins_file.write_text(json.dumps({"version": 2}))
+
+        with patch("pathlib.Path.home", return_value=tmp_path):
+            assert check_claude_plugin_installed() is False
+
+
+class TestClaudePluginInstall:
+    """Tests for install_claude_plugin."""
+
+    def test_skips_when_already_installed(self, tmp_path):
+        """Test that install returns 'skipped' when plugin is already installed."""
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=True,
+        ):
+            result = install_claude_plugin()
+            assert result == "skipped"
+
+    def test_install_calls_two_subprocess_commands(self):
+        """Test that install runs marketplace add then plugin install."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", return_value=mock_result) as mock_run:
+                result = install_claude_plugin()
+
+        assert result == "installed"
+        assert mock_run.call_count == 2
+        # First call: marketplace add
+        first_call = mock_run.call_args_list[0]
+        assert "marketplace" in first_call[0][0]
+        assert "add" in first_call[0][0]
+        assert "VioletCranberry/coco-search" in first_call[0][0]
+        # Second call: plugin install
+        second_call = mock_run.call_args_list[1]
+        assert "install" in second_call[0][0]
+        assert "cocosearch@cocosearch" in second_call[0][0]
+
+    def test_raises_when_claude_cli_not_found(self):
+        """Test that FileNotFoundError from subprocess raises ConfigError."""
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", side_effect=FileNotFoundError):
+                with pytest.raises(ConfigError, match="Claude CLI not found"):
+                    install_claude_plugin()
+
+    def test_raises_on_marketplace_add_failure(self):
+        """Test that non-zero exit from marketplace add raises ConfigError."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="marketplace error"
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(ConfigError, match="Failed to add marketplace"):
+                    install_claude_plugin()
+
+    def test_raises_on_plugin_install_failure(self):
+        """Test that non-zero exit from plugin install raises ConfigError."""
+        success = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+        failure = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="install error"
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", side_effect=[success, failure]):
+                with pytest.raises(ConfigError, match="Failed to install plugin"):
+                    install_claude_plugin()
+
+    def test_error_message_includes_stderr(self):
+        """Test that error messages include stderr content."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="specific error detail"
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(ConfigError, match="specific error detail"):
+                    install_claude_plugin()
+
+    def test_falls_back_to_stdout_when_stderr_empty(self):
+        """Test that error falls back to stdout when stderr is empty."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="stdout error info", stderr=""
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", return_value=mock_result):
+                with pytest.raises(ConfigError, match="stdout error info"):
+                    install_claude_plugin()
+
+    def test_subprocess_called_with_timeout(self):
+        """Test that subprocess calls include a timeout."""
+        mock_result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="", stderr=""
+        )
+
+        with patch(
+            "cocosearch.config.generator.check_claude_plugin_installed",
+            return_value=False,
+        ):
+            with patch("subprocess.run", return_value=mock_result) as mock_run:
+                install_claude_plugin()
+
+        for call in mock_run.call_args_list:
+            assert call[1]["timeout"] == 60

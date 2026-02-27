@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,12 +24,14 @@ from cocosearch.config import (
     CocoSearchConfig,
     ConfigError as ConfigLoadError,
     ConfigResolver,
+    check_claude_plugin_installed,
     config_key_to_env_var,
     find_config_file,
     generate_agents_md_routing,
     generate_claude_md_routing,
     generate_config,
     generate_opencode_mcp_config,
+    install_claude_plugin,
     load_config as load_project_config,
 )
 from cocosearch.dashboard import run_terminal_dashboard
@@ -1557,6 +1560,41 @@ def init_command(args: argparse.Namespace) -> int:
                         f"[yellow]Warning:[/yellow] Could not update {target}: {e}"
                     )
 
+    # Offer to install CocoSearch plugin for Claude Code
+    no_claude_mcp = getattr(args, "no_claude_mcp", False)
+    if not no_claude_mcp:
+        console.print()
+        try:
+            already_installed = check_claude_plugin_installed()
+        except Exception:
+            already_installed = False
+
+        if already_installed:
+            console.print(
+                "[dim]CocoSearch plugin already installed in Claude Code.[/dim]"
+            )
+        else:
+            response = input("Install CocoSearch plugin for Claude Code? [y/N] ")
+            if response.lower() == "y":
+                try:
+                    result = install_claude_plugin()
+                    if result == "installed":
+                        console.print(
+                            "[green]Installed CocoSearch plugin for Claude Code[/green]"
+                        )
+                    else:
+                        console.print(
+                            "[dim]CocoSearch plugin already installed in Claude Code.[/dim]"
+                        )
+                except (OSError, ConfigLoadError) as e:
+                    console.print(
+                        f"[yellow]Warning:[/yellow] Could not install Claude Code plugin: {e}"
+                    )
+                except subprocess.TimeoutExpired:
+                    console.print(
+                        "[yellow]Warning:[/yellow] Claude CLI command timed out."
+                    )
+
     return 0
 
 
@@ -2566,6 +2604,12 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Skip the OpenCode MCP server registration prompt",
+    )
+    init_parser.add_argument(
+        "--no-claude-mcp",
+        action="store_true",
+        default=False,
+        help="Skip the Claude Code plugin installation prompt",
     )
 
     # MCP subcommand
