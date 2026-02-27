@@ -58,6 +58,12 @@ class ModuleResolver(Protocol):
     1. Building an index from indexed files that maps some form of
        module identifier to relative file paths.
     2. Using that index to resolve individual dependency edges.
+
+    **Optional extension:** A resolver may also implement
+    ``resolve_many(edge, module_index) -> list[str] | None`` to support
+    one-to-many resolution (e.g., directory references expanding to all
+    contained files).  The orchestrator in ``extractor.py`` checks for
+    this via ``hasattr`` and prefers it over :meth:`resolve` when present.
     """
 
     def build_index(self, indexed_files: list[tuple[str, str]]) -> dict[str, str]:
