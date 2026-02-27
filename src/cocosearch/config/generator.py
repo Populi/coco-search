@@ -79,6 +79,32 @@ Fall back to Grep/Glob ONLY for:
 """
 
 
+def _append_routing_section(path: Path, marker: str, section: str) -> str:
+    """Add CocoSearch tool routing section to a markdown file.
+
+    Args:
+        path: Path to the markdown file (CLAUDE.md or AGENTS.md).
+        marker: Duplicate detection marker string.
+        section: The routing section content to add.
+
+    Returns:
+        "created" if a new file was created,
+        "appended" if the section was appended to an existing file,
+        "skipped" if the section already exists.
+    """
+    if path.exists():
+        content = path.read_text()
+        if marker in content:
+            return "skipped"
+        separator = "\n" if content.endswith("\n") else "\n\n"
+        path.write_text(content + separator + section)
+        return "appended"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(section)
+    return "created"
+
+
 def generate_claude_md_routing(path: Path) -> str:
     """Add CocoSearch tool routing section to a CLAUDE.md file.
 
@@ -90,14 +116,18 @@ def generate_claude_md_routing(path: Path) -> str:
         "appended" if the section was appended to an existing file,
         "skipped" if the section already exists.
     """
-    if path.exists():
-        content = path.read_text()
-        if CLAUDE_MD_DUPLICATE_MARKER in content:
-            return "skipped"
-        separator = "\n" if content.endswith("\n") else "\n\n"
-        path.write_text(content + separator + CLAUDE_MD_ROUTING_SECTION)
-        return "appended"
+    return _append_routing_section(path, CLAUDE_MD_DUPLICATE_MARKER, CLAUDE_MD_ROUTING_SECTION)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(CLAUDE_MD_ROUTING_SECTION)
-    return "created"
+
+def generate_agents_md_routing(path: Path) -> str:
+    """Add CocoSearch tool routing section to an AGENTS.md file.
+
+    Args:
+        path: Path to the AGENTS.md file.
+
+    Returns:
+        "created" if a new file was created,
+        "appended" if the section was appended to an existing file,
+        "skipped" if the section already exists.
+    """
+    return _append_routing_section(path, CLAUDE_MD_DUPLICATE_MARKER, CLAUDE_MD_ROUTING_SECTION)

@@ -8,6 +8,7 @@ from cocosearch.config import (
     CLAUDE_MD_ROUTING_SECTION,
     CONFIG_TEMPLATE,
     ConfigError,
+    generate_agents_md_routing,
     generate_claude_md_routing,
     generate_config,
 )
@@ -111,3 +112,58 @@ class TestClaudeMdRouting:
         assert "get_file_impact" in CLAUDE_MD_ROUTING_SECTION
         assert "Grep" in CLAUDE_MD_ROUTING_SECTION
         assert "Glob" in CLAUDE_MD_ROUTING_SECTION
+
+
+class TestAgentsMdRouting:
+    """Tests for generate_agents_md_routing."""
+
+    def test_creates_new_file(self, tmp_path):
+        """Test that it creates a new AGENTS.md when none exists."""
+        target = tmp_path / "AGENTS.md"
+
+        result = generate_agents_md_routing(target)
+
+        assert result == "created"
+        assert target.exists()
+        assert CLAUDE_MD_DUPLICATE_MARKER in target.read_text()
+
+    def test_creates_parent_directories(self, tmp_path):
+        """Test that it creates parent dirs (e.g. ~/.config/opencode/)."""
+        target = tmp_path / "nested" / "dir" / "AGENTS.md"
+
+        result = generate_agents_md_routing(target)
+
+        assert result == "created"
+        assert target.exists()
+
+    def test_appends_to_existing_file(self, tmp_path):
+        """Test that it appends to an existing AGENTS.md preserving content."""
+        target = tmp_path / "AGENTS.md"
+        existing = "# My Project\n\nExisting content.\n"
+        target.write_text(existing)
+
+        result = generate_agents_md_routing(target)
+
+        assert result == "appended"
+        content = target.read_text()
+        assert content.startswith(existing)
+        assert CLAUDE_MD_DUPLICATE_MARKER in content
+
+    def test_skips_when_marker_present(self, tmp_path):
+        """Test that it skips if routing section already exists."""
+        target = tmp_path / "AGENTS.md"
+        target.write_text(f"# Project\n\n{CLAUDE_MD_ROUTING_SECTION}")
+
+        result = generate_agents_md_routing(target)
+
+        assert result == "skipped"
+
+    def test_same_content_as_claude_md(self, tmp_path):
+        """Test that AGENTS.md and CLAUDE.md routing produce the same content."""
+        claude_target = tmp_path / "CLAUDE.md"
+        agents_target = tmp_path / "AGENTS.md"
+
+        generate_claude_md_routing(claude_target)
+        generate_agents_md_routing(agents_target)
+
+        assert claude_target.read_text() == agents_target.read_text()

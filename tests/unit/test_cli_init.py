@@ -8,8 +8,8 @@ from cocosearch.config import CLAUDE_MD_DUPLICATE_MARKER
 
 
 def _make_args(**kwargs):
-    """Create args namespace with no_claude_md=True by default."""
-    defaults = {"no_claude_md": True}
+    """Create args namespace with no_claude_md=True and no_agents_md=True by default."""
+    defaults = {"no_claude_md": True, "no_agents_md": True}
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
 
@@ -245,3 +245,117 @@ def test_default_choice_is_local(tmp_path, monkeypatch):
     claude_md = tmp_path / "CLAUDE.md"
     assert claude_md.exists()
     assert CLAUDE_MD_DUPLICATE_MARKER in claude_md.read_text()
+
+
+# --- AGENTS.md tests ---
+
+
+def test_skips_prompt_with_no_agents_md_flag(tmp_path, monkeypatch):
+    """Test that --no-agents-md skips the AGENTS.md prompt entirely."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=True, no_agents_md=True)
+
+    with patch("builtins.input") as mock_input:
+        result = init_command(args)
+
+    assert result == 0
+    mock_input.assert_not_called()
+
+
+def test_user_accepts_local_agents_md(tmp_path, monkeypatch):
+    """Test that user choosing local creates AGENTS.md in project."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=True, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", side_effect=["y", "1"]):
+            result = init_command(args)
+
+    assert result == 0
+    agents_md = tmp_path / "AGENTS.md"
+    assert agents_md.exists()
+    assert CLAUDE_MD_DUPLICATE_MARKER in agents_md.read_text()
+
+
+def test_user_accepts_global_agents_md(tmp_path, monkeypatch):
+    """Test that user choosing global creates ~/.config/opencode/AGENTS.md."""
+    monkeypatch.chdir(tmp_path)
+    fake_home = tmp_path / "fakehome"
+    args = _make_args(no_claude_md=True, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", side_effect=["y", "2"]):
+            with patch("pathlib.Path.home", return_value=fake_home):
+                result = init_command(args)
+
+    assert result == 0
+    agents_md = fake_home / ".config" / "opencode" / "AGENTS.md"
+    assert agents_md.exists()
+    assert CLAUDE_MD_DUPLICATE_MARKER in agents_md.read_text()
+
+
+def test_user_declines_agents_md(tmp_path, monkeypatch):
+    """Test that user declining 'n' skips AGENTS.md creation."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=True, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", return_value="n"):
+            result = init_command(args)
+
+    assert result == 0
+    assert not (tmp_path / "AGENTS.md").exists()
+
+
+def test_invalid_agents_md_choice_skips_gracefully(tmp_path, monkeypatch, capsys):
+    """Test that invalid AGENTS.md location choice skips without error."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=True, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", side_effect=["y", "3"]):
+            result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Invalid choice" in captured.out
+
+
+def test_agents_md_write_error_does_not_fail_command(tmp_path, monkeypatch, capsys):
+    """Test that OSError on AGENTS.md write still returns 0."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=True, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        with patch("builtins.input", side_effect=["y", "1"]):
+            with patch(
+                "cocosearch.cli.generate_agents_md_routing",
+                side_effect=OSError("Permission denied"),
+            ):
+                result = init_command(args)
+
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out
+    assert "Permission denied" in captured.out
+
+
+def test_both_claude_md_and_agents_md_prompts(tmp_path, monkeypatch):
+    """Test that both CLAUDE.md and AGENTS.md prompts are offered."""
+    monkeypatch.chdir(tmp_path)
+    args = _make_args(no_claude_md=False, no_agents_md=False)
+
+    with patch("sys.stdin") as mock_stdin:
+        mock_stdin.isatty.return_value = True
+        # Accepts CLAUDE.md (y, 1), then accepts AGENTS.md (y, 1)
+        with patch("builtins.input", side_effect=["y", "1", "y", "1"]):
+            result = init_command(args)
+
+    assert result == 0
+    assert (tmp_path / "CLAUDE.md").exists()
+    assert (tmp_path / "AGENTS.md").exists()

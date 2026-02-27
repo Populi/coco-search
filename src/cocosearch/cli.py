@@ -25,6 +25,7 @@ from cocosearch.config import (
     ConfigResolver,
     config_key_to_env_var,
     find_config_file,
+    generate_agents_md_routing,
     generate_claude_md_routing,
     generate_config,
     load_config as load_project_config,
@@ -1442,40 +1443,82 @@ def init_command(args: argparse.Namespace) -> int:
             console.print(f"[bold red]Error:[/bold red] {e}")
             return 1
 
+    if not sys.stdin.isatty():
+        return 0
+
     # Offer to add tool routing to CLAUDE.md
     no_claude_md = getattr(args, "no_claude_md", False)
-    if no_claude_md or not sys.stdin.isatty():
-        return 0
+    if not no_claude_md:
+        console.print()
+        response = input("Add CocoSearch tool routing to CLAUDE.md? [y/N] ")
+        if response.lower() == "y":
+            console.print()
+            console.print("  [cyan]1[/cyan]  Local project CLAUDE.md (default)")
+            console.print("  [cyan]2[/cyan]  Global ~/.claude/CLAUDE.md")
+            console.print()
+            choice = input("Location [1]: ").strip() or "1"
 
-    console.print()
-    response = input("Add CocoSearch tool routing to CLAUDE.md? [y/N] ")
-    if response.lower() != "y":
-        return 0
+            if choice == "1":
+                target = Path.cwd() / "CLAUDE.md"
+            elif choice == "2":
+                target = Path.home() / ".claude" / "CLAUDE.md"
+            else:
+                console.print("[dim]Invalid choice, skipping CLAUDE.md setup.[/dim]")
+                target = None
 
-    console.print()
-    console.print("  [cyan]1[/cyan]  Local project CLAUDE.md (default)")
-    console.print("  [cyan]2[/cyan]  Global ~/.claude/CLAUDE.md")
-    console.print()
-    choice = input("Location [1]: ").strip() or "1"
+            if target:
+                try:
+                    result = generate_claude_md_routing(target)
+                    if result == "created":
+                        console.print(f"[green]Created {target}[/green]")
+                    elif result == "appended":
+                        console.print(f"[green]Added tool routing to {target}[/green]")
+                    else:
+                        console.print(
+                            f"[dim]Tool routing already present in {target}[/dim]"
+                        )
+                except OSError as e:
+                    console.print(
+                        f"[yellow]Warning:[/yellow] Could not write {target}: {e}"
+                    )
 
-    if choice == "1":
-        target = Path.cwd() / "CLAUDE.md"
-    elif choice == "2":
-        target = Path.home() / ".claude" / "CLAUDE.md"
-    else:
-        console.print("[dim]Invalid choice, skipping CLAUDE.md setup.[/dim]")
-        return 0
+    # Offer to add tool routing to AGENTS.md (OpenCode)
+    no_agents_md = getattr(args, "no_agents_md", False)
+    if not no_agents_md:
+        console.print()
+        response = input(
+            "Add CocoSearch tool routing to AGENTS.md (for OpenCode)? [y/N] "
+        )
+        if response.lower() == "y":
+            console.print()
+            console.print("  [cyan]1[/cyan]  Local project AGENTS.md (default)")
+            console.print("  [cyan]2[/cyan]  Global ~/.config/opencode/AGENTS.md")
+            console.print()
+            choice = input("Location [1]: ").strip() or "1"
 
-    try:
-        result = generate_claude_md_routing(target)
-        if result == "created":
-            console.print(f"[green]Created {target}[/green]")
-        elif result == "appended":
-            console.print(f"[green]Added tool routing to {target}[/green]")
-        else:
-            console.print(f"[dim]Tool routing already present in {target}[/dim]")
-    except OSError as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not write {target}: {e}")
+            if choice == "1":
+                target = Path.cwd() / "AGENTS.md"
+            elif choice == "2":
+                target = Path.home() / ".config" / "opencode" / "AGENTS.md"
+            else:
+                console.print("[dim]Invalid choice, skipping AGENTS.md setup.[/dim]")
+                target = None
+
+            if target:
+                try:
+                    result = generate_agents_md_routing(target)
+                    if result == "created":
+                        console.print(f"[green]Created {target}[/green]")
+                    elif result == "appended":
+                        console.print(f"[green]Added tool routing to {target}[/green]")
+                    else:
+                        console.print(
+                            f"[dim]Tool routing already present in {target}[/dim]"
+                        )
+                except OSError as e:
+                    console.print(
+                        f"[yellow]Warning:[/yellow] Could not write {target}: {e}"
+                    )
 
     return 0
 
@@ -2474,6 +2517,12 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Skip the CLAUDE.md tool routing prompt",
+    )
+    init_parser.add_argument(
+        "--no-agents-md",
+        action="store_true",
+        default=False,
+        help="Skip the AGENTS.md tool routing prompt (OpenCode)",
     )
 
     # MCP subcommand

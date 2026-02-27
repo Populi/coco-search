@@ -54,7 +54,18 @@ done
 
 ### OpenCode
 
-Copy skills to your OpenCode config:
+OpenCode discovers skills from `.opencode/skills/`, `.claude/skills/`, and `.agents/skills/` in your project root, and from `~/.config/opencode/skills/` globally.
+
+**Project-local (symlink from cloned CocoSearch repo):**
+
+```bash
+mkdir -p .opencode/skills
+for skill in cocosearch-onboarding cocosearch-refactoring cocosearch-debugging cocosearch-deps cocosearch-quickstart cocosearch-explore cocosearch-new-feature cocosearch-subway cocosearch-add-language cocosearch-add-grammar cocosearch-add-extractor cocosearch-review-pr; do
+    ln -sfn "../../skills/$skill" ".opencode/skills/$skill"
+done
+```
+
+**Global:**
 
 ```bash
 for skill in cocosearch-onboarding cocosearch-refactoring cocosearch-debugging cocosearch-deps cocosearch-quickstart cocosearch-explore cocosearch-new-feature cocosearch-subway cocosearch-add-language cocosearch-add-grammar cocosearch-add-extractor cocosearch-review-pr; do
@@ -62,6 +73,8 @@ for skill in cocosearch-onboarding cocosearch-refactoring cocosearch-debugging c
     cp skills/$skill/SKILL.md ~/.config/opencode/skills/$skill/SKILL.md
 done
 ```
+
+> **Note:** OpenCode has built-in Claude Code compatibility — it also reads skills from `.claude/skills/`, so existing Claude Code skill installations work without changes.
 
 After installation, restart your AI coding assistant or run the skill activation command for your platform.
 

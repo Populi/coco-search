@@ -11,6 +11,7 @@ from .generator import (
     CLAUDE_MD_DUPLICATE_MARKER,
     CLAUDE_MD_ROUTING_SECTION,
     CONFIG_TEMPLATE,
+    generate_agents_md_routing,
     generate_claude_md_routing,
     generate_config,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "suggest_field_name",
     "generate_config",
     "generate_claude_md_routing",
+    "generate_agents_md_routing",
     "CONFIG_TEMPLATE",
     "CLAUDE_MD_ROUTING_SECTION",
     "CLAUDE_MD_DUPLICATE_MARKER",
