@@ -405,8 +405,7 @@ class TestExtractDependenciesModuleResolution:
         doc_edges = [
             e
             for e in edges
-            if e.source_file == "docs/guide.md"
-            and e.metadata.get("kind") == "doc_link"
+            if e.source_file == "docs/guide.md" and e.metadata.get("kind") == "doc_link"
         ]
         target_files = {e.target_file for e in doc_edges}
         assert target_files == {"src/search/engine.py", "src/search/cache.py"}

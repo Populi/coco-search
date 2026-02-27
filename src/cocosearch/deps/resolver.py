@@ -423,11 +423,15 @@ class MarkdownResolver:
                 return module_index[candidate + "/"]
             return None
 
-        # Project-relative paths: direct lookup
-        if module_stripped in module_index:
-            return module_index[module_stripped]
-        if module_stripped + "/" in module_index:
-            return module_index[module_stripped + "/"]
+        # Project-relative paths: direct lookup, then ancestor-prefix probing
+        match = self._find_with_prefix(edge.source_file, module_stripped, module_index)
+        if match is not None:
+            return module_index[match]
+        match = self._find_with_prefix(
+            edge.source_file, module_stripped + "/", module_index
+        )
+        if match is not None:
+            return module_index[match]
 
         return None
 
@@ -454,13 +458,31 @@ class MarkdownResolver:
         else:
             candidate = module_stripped
 
-        # Check for directory expansion
-        if candidate in self._dir_files:
-            return list(self._dir_files[candidate])
+        # Check for directory expansion (with ancestor-prefix probing)
+        dir_match = self._find_with_prefix(edge.source_file, candidate, self._dir_files)
+        if dir_match is not None:
+            return list(self._dir_files[dir_match])
 
         # Fall back to single-file resolution
         result = self.resolve(edge, module_index)
         return [result] if result else None
+
+    @staticmethod
+    def _find_with_prefix(source_file: str, candidate: str, lookup: dict) -> str | None:
+        """Try candidate directly, then with source file ancestor prefixes."""
+        if candidate in lookup:
+            return candidate
+
+        source_posix = source_file.replace("\\", "/")
+        parts = PurePosixPath(source_posix).parts
+        # Try each ancestor (shallowest first: "project/", "project/sub/", ...)
+        for i in range(1, len(parts)):  # exclude filename
+            prefix = "/".join(parts[:i])
+            prefixed = f"{prefix}/{candidate}"
+            if prefixed in lookup:
+                return prefixed
+
+        return None
 
     @staticmethod
     def _normalize_relative(source_file: str, module_stripped: str) -> str:

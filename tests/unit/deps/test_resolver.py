@@ -672,3 +672,66 @@ class TestMarkdownResolverResolveMany:
         assert result is not None
         # Only direct children of src/search, not src/search/sub/
         assert set(result) == {"src/search/engine.py"}
+
+
+# ============================================================================
+# Tests: MarkdownResolver prefix probing (parent-directory indexing)
+# ============================================================================
+
+
+class TestMarkdownResolverPrefixProbing:
+    """Tests for ancestor-prefix probing when indexed from a parent directory."""
+
+    def test_resolves_project_relative_with_prefix(self):
+        """File at project/src/cli.py, markdown at project/docs/guide.md
+        referencing src/cli.py — should resolve via prefix probing."""
+        resolver = MarkdownResolver()
+        module_index = {"project/src/cli.py": "project/src/cli.py"}
+        edge = _make_md_edge("project/docs/guide.md", "src/cli.py")
+        assert resolver.resolve(edge, module_index) == "project/src/cli.py"
+
+    def test_resolves_directory_with_prefix(self):
+        """Directory at project/src/search/, markdown at project/docs/guide.md
+        referencing src/search/ — should resolve via prefix probing."""
+        resolver = MarkdownResolver()
+        module_index = {
+            "project/src/search": "project/src/search/engine.py",
+            "project/src/search/": "project/src/search/engine.py",
+        }
+        edge = _make_md_edge("project/docs/guide.md", "src/search/")
+        assert resolver.resolve(edge, module_index) == "project/src/search/engine.py"
+
+    def test_resolve_many_directory_with_prefix(self):
+        """resolve_many expands prefixed directory to all files."""
+        resolver = MarkdownResolver()
+        files = [
+            ("project/src/search/engine.py", "py"),
+            ("project/src/search/cache.py", "py"),
+        ]
+        index = resolver.build_index(files)
+        edge = _make_md_edge("project/docs/guide.md", "src/search/")
+        result = resolver.resolve_many(edge, index)
+        assert result is not None
+        assert set(result) == {
+            "project/src/search/engine.py",
+            "project/src/search/cache.py",
+        }
+
+    def test_prefix_not_applied_to_relative_paths(self):
+        """Relative paths (./  ../) should not use prefix probing."""
+        resolver = MarkdownResolver()
+        module_index = {"project/docs/other.md": "project/docs/other.md"}
+        # ./other.md normalises relative to source dir — no prefix needed
+        edge = _make_md_edge("project/docs/guide.md", "./other.md")
+        assert resolver.resolve(edge, module_index) == "project/docs/other.md"
+
+    def test_no_prefix_when_direct_match_exists(self):
+        """Direct match takes priority over prefixed match."""
+        resolver = MarkdownResolver()
+        module_index = {
+            "src/cli.py": "src/cli.py",
+            "project/src/cli.py": "project/src/cli.py",
+        }
+        edge = _make_md_edge("project/docs/guide.md", "src/cli.py")
+        # Direct match wins — no prefix probing needed
+        assert resolver.resolve(edge, module_index) == "src/cli.py"
