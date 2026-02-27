@@ -328,7 +328,6 @@ class TestOpencodeSkills:
 
         # Modify one skill to verify it's not overwritten
         first_skill = sorted(target.iterdir())[0]
-        original_content = (first_skill / "SKILL.md").read_text()
         (first_skill / "SKILL.md").write_text("custom content")
 
         # Second install

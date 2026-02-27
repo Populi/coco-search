@@ -224,13 +224,15 @@ Creates a `cocosearch.yaml` starter configuration file in the current directory.
 1. Add a CocoSearch tool routing table to CLAUDE.md (local project or global `~/.claude/CLAUDE.md`)
 2. Add a CocoSearch tool routing table to AGENTS.md (local project or global `~/.config/opencode/AGENTS.md`)
 3. Register CocoSearch MCP server with OpenCode (local or global `opencode.json`)
-4. Install CocoSearch plugin for Claude Code (via `claude` CLI)
+4. Install CocoSearch workflow skills for OpenCode (local or global skills directory)
+5. Install CocoSearch plugin for Claude Code (via `claude` CLI)
 
 | Flag | Description |
 | ---- | ----------- |
 | `--no-claude-md` | Skip the CLAUDE.md tool routing prompt |
 | `--no-agents-md` | Skip the AGENTS.md tool routing prompt (OpenCode) |
 | `--no-opencode-mcp` | Skip the OpenCode MCP server registration prompt |
+| `--no-opencode-skills` | Skip the OpenCode workflow skills installation prompt |
 | `--no-claude-mcp` | Skip the Claude Code plugin installation prompt |
 
 ```bash
@@ -238,7 +240,7 @@ Creates a `cocosearch.yaml` starter configuration file in the current directory.
 uv run cocosearch init
 
 # Non-interactive: creates cocosearch.yaml only
-uv run cocosearch init --no-claude-md --no-agents-md --no-opencode-mcp --no-claude-mcp
+uv run cocosearch init --no-claude-md --no-agents-md --no-opencode-mcp --no-opencode-skills --no-claude-mcp
 ```
 
 All interactive prompts are skipped automatically when stdin is not a TTY (e.g., in CI pipelines or when piping input).
