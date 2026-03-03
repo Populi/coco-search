@@ -37,6 +37,7 @@ from typing import Annotated  # noqa: E402
 
 import cocoindex  # noqa: E402
 from mcp.server.fastmcp import Context, FastMCP  # noqa: E402
+from mcp.server.transport_security import TransportSecuritySettings  # noqa: E402
 from pydantic import Field  # noqa: E402
 from starlette.responses import (  # noqa: E402
     FileResponse,
@@ -2691,6 +2692,15 @@ def run_server(
         _get_cs_log().infra(
             "CocoIndex init skipped — infrastructure may be unavailable",
             level="WARNING",
+        )
+
+    # When binding to a non-localhost address (e.g., 0.0.0.0 for Docker),
+    # disable DNS rebinding protection. FastMCP auto-enables it for localhost
+    # at __init__ time, but run_server() sets the host after construction,
+    # leaving stale allowed_hosts that reject remote clients with 421.
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
         )
 
     if transport == "stdio":

@@ -809,6 +809,39 @@ class TestRunServer:
                 # Verify mcp.run called with streamable-http transport
                 mock_mcp.run.assert_called_once_with(transport="streamable-http")
 
+    def test_non_localhost_disables_dns_rebinding_protection(self, monkeypatch):
+        """Non-localhost host disables DNS rebinding protection for Docker/remote."""
+        monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                mock_settings = MagicMock()
+                mock_mcp.settings = mock_settings
+
+                from cocosearch.mcp.server import run_server
+
+                run_server(transport="sse", host="0.0.0.0", port=3000)
+
+                # transport_security should be set with protection disabled
+                ts = mock_settings.transport_security
+                assert ts.enable_dns_rebinding_protection is False
+
+    def test_localhost_preserves_dns_rebinding_protection(self, monkeypatch):
+        """Localhost host does not override transport_security."""
+        monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
+        with patch("cocosearch.mcp.server._get_cs_log"):
+            with patch("cocosearch.mcp.server.mcp") as mock_mcp:
+                sentinel = object()
+                mock_settings = MagicMock()
+                mock_settings.transport_security = sentinel
+                mock_mcp.settings = mock_settings
+
+                from cocosearch.mcp.server import run_server
+
+                run_server(transport="sse", host="127.0.0.1", port=8080)
+
+                # transport_security should remain unchanged (sentinel)
+                assert mock_settings.transport_security is sentinel
+
     def test_invalid_transport_raises_valueerror(self, monkeypatch):
         """Invalid transport raises ValueError."""
         monkeypatch.setenv("COCOSEARCH_NO_DASHBOARD", "1")
