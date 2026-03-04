@@ -84,6 +84,7 @@ LANGUAGE_MAP = {
     "rb": "ruby",
     # PHP
     "php": "php",
+    "inc": "php",
     # Bash
     "sh": "bash",
     "bash": "bash",
