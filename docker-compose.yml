@@ -20,7 +20,12 @@ services:
 
   app:
     profiles: ["app"]
-    build: .
+    build: 
+      context: .
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    image: populi/cocosearch:latest 
     container_name: cocosearch-app
     depends_on:
       db:

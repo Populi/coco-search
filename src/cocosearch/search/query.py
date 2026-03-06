@@ -85,7 +85,7 @@ LANGUAGE_EXTENSIONS = {
     "kotlin": [".kt", ".kts"],
     "markdown": [".md", ".mdx"],
     "pascal": [".pas", ".dpr"],
-    "php": [".php"],
+    "php": [".php", ".inc"],
     "python": [".py", ".pyw", ".pyi"],
     "r": [".r", ".R"],
     "ruby": [".rb"],

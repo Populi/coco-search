@@ -3,13 +3,14 @@ set -euo pipefail
 
 IMAGE="populi/cocosearch:latest"
 
-echo "Building app service..."
-docker compose build app
+v0docker buildx build --platform linux/amd64 --tag populi/cocosearch:latest-amd64 --push .
 
-echo "Tagging as $IMAGE..."
-docker tag docker.io/library/coco-search-app  "$IMAGE"
+docker buildx build --platform linux/arm64 --tag populi/cocosearch:latest-arm64 --push .
 
-echo "Pushing $IMAGE..."
-docker push "$IMAGE"
+docker manifest create populi/cocosearch:latest \
+  populi/cocosearch:latest-amd64 \
+  populi/cocosearch:latest-arm64
+
+docker manifest push --purge populi/cocosearch:latest
 
 echo "Done."
