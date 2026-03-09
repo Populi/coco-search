@@ -6,17 +6,43 @@ on:
   workflow_dispatch:
 
 env:
-  PYTHON_VERSION: "3.11"
+  PYTHON_VERSION: "3.13"
 
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      versions: ${{ steps.filter.outputs.versions }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'src/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+            versions:
+              - 'pyproject.toml'
+              - 'src/cocosearch/__init__.py'
+              - '.claude-plugin/**'
+
   lint:
     name: Lint
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Ruff check
         run: uvx ruff check src/ tests/
@@ -26,9 +52,11 @@ jobs:
 
   validate-versions:
     name: Validate Versions
+    needs: changes
+    if: needs.changes.outputs.versions == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Validate JSON files
         run: |
@@ -56,18 +84,20 @@ jobs:
 
   unit-tests:
     name: Unit Tests
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Restore cached virtual environment
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .venv
           key: venv-${{ runner.os }}-python-${{ env.PYTHON_VERSION }}-${{ hashFiles('uv.lock') }}
